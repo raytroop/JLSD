@@ -12,17 +12,17 @@ includet("../blks/WvfmGen.jl"); using .WvfmGen
 
 function init_trx()
     #global param for simulation
-    param = TrxStruct.Param(  
+    param = TrxStruct.Param(
                 data_rate = 56e9,
                 pam = 2,
-                osr = 20,
+                osr = 24,
                 blk_size = 2^10,
-                subblk_size = 32, 
+                subblk_size = 32,
                 nsym_total = Int(1e6))
     Random.seed!(param.rand_seed)
 
     #bist param
-    bist = TrxStruct.Bist(  
+    bist = TrxStruct.Bist(
                 param = param,
                 polynomial = TrxStruct.PRBS31)
 
@@ -31,18 +31,18 @@ function init_trx()
     drv = TrxStruct.Drv(
                 param = param,
                 ir = u_gen_ir_rc(param.dt, param.fbaud, 20*param.tui),
-                fir = [1., -0.25],
+                fir = [1., -0.2],
                 swing = 0.8,
                 jitter_en = true,
                 dcd = 0.03,
                 rj_s = 300e-15,
-                sj_amp_ui = 0.0,
+                sj_amp_ui = 0.1,
                 sj_freq = 2e5)
 
     #AWGN ch param
     ch = TrxStruct.Ch(
                 param = param,
-                ir_ch = u_fr_to_imp("./channel_data/TF_data/channel_4inch.mat", 
+                ir_ch = u_fr_to_imp("./channel_data/TF_data/channel_4inch.mat",
                         param.tui, param.osr, npre = 20, npost= 79),
                 ir_pad = u_gen_ir_rc(param.dt, param.fbaud, 20*param.tui),
                 noise_en = true,
@@ -83,7 +83,7 @@ function init_trx()
                 kp = 1/2^6,
                 ki = 1/2^14,
                 pi_res = clkgen.pi_res)
-    
+
     adpt = TrxStruct.Adpt(
                 param = param,
                 Neslc_per_phi = eslc.N_per_phi,
@@ -103,20 +103,20 @@ function init_trx()
     wvfm.eye1.colormap = cm_turbo
 
     init_plot(wvfm)
-    
+
     println("init done")
 
     return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
 end
 
 function sim_subblk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx 
+    @unpack param, bist, drv, ch, clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_subblk = blk_idx
 
     clkgen_pi_itp_top!(clkgen, pi_code=cdr.pi_code)
-        
+
     sample_phi_top!(splr, clkgen.Φo_subblk)
 
     slicers_top!(dslc, splr.So_subblk, ref_code=[[128],[128],[128],[128]])
@@ -133,7 +133,7 @@ function sim_subblk(trx, blk_idx)
 end
 
 function sim_blk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx 
+    @unpack param, bist, drv, ch, clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_blk = blk_idx
@@ -143,14 +143,14 @@ function sim_blk(trx, blk_idx)
     dac_drv_top!(drv, bist.So)
 
     # append!(drv.buffer_debug, mod.(u_find_0x(drv.Vo), param.osr) ./ param.osr)
-    
+
     ch_top!(ch, drv.Vo)
 
     sample_itp_top!(splr, ch.Vo)
 
 
     run_blk_iter(trx, 0, param.nsubblk, sim_subblk)
-    
+
     ber_checker_top!(bist)
 
     #record waveform here

@@ -32,7 +32,7 @@ const PRBS31 = [28,31]
     const nsym_total::Int64
     const nblk = Int(round(nsym_total/blk_size))
 
-    const rand_seed = 300  
+    const rand_seed = 300
 
     cur_blk = 0
     cur_subblk = 0
@@ -55,7 +55,7 @@ end
     chk_precode_prev_sym = 0
     chk_lock_status = false
     chk_lock_cnt = 0
-    chk_lock_cnt_threshold = 128 
+    chk_lock_cnt_threshold = 128
     ber_err_cnt = 0
     ber_bit_cnt = 0
     ref_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
@@ -79,7 +79,7 @@ end
     rlm_en = false
     rlm = 1.0
     quantize = false
-    dac_res = 7 
+    dac_res = 7
 
     jitter_en = false
     dcd = 0.0
@@ -102,8 +102,8 @@ end
     Δtt_prev_nui = @views Δtt_ext[end-prev_nui:end]
     tt_uniform::Vector = (0:param.blk_size_osr-1) .+ prev_nui/2*param.osr
 
-    Vo_conv::Vector = zeros(param.blk_size_osr+lastindex(ir)-1) 
-    Vo = @views Vo_conv[1:param.blk_size_osr] 
+    Vo_conv::Vector = zeros(param.blk_size_osr+lastindex(ir)-1)
+    Vo = @views Vo_conv[1:param.blk_size_osr]
     Vo_mem = @views Vo_conv[param.blk_size_osr+1:end]
 
     buffer_debug = Float64[]
@@ -115,18 +115,19 @@ end
     noise_en = true
 
     ir_ch::Vector{Float64}
-    Vch_conv::Vector = zeros(param.blk_size_osr+lastindex(ir_ch)-1) 
+    Vch_conv::Vector = zeros(param.blk_size_osr+lastindex(ir_ch)-1)
     Vch = @views Vch_conv[1:param.blk_size_osr]
     Vch_mem = @views Vch_conv[param.blk_size_osr+1:end]
-    
+
 
     noise_Z::Float64 = 50
     noise_dbm_hz::Float64 = -174
-    noise_rms::Float64 = sqrt(0.5/param.dt*10^((noise_dbm_hz-30.0)/10)*noise_Z)
+    # noise_rms::Float64 = sqrt(0.5/param.dt*10^((noise_dbm_hz-30.0)/10)*noise_Z)
+    noise_rms::Float64 = sqrt(2/param.dt*10^((noise_dbm_hz-30.0)/10)*noise_Z)
 
 
     ir_pad::Vector{Float64}
-    Vo_conv::Vector = zeros(param.blk_size_osr+lastindex(ir_pad)-1) 
+    Vo_conv::Vector = zeros(param.blk_size_osr+lastindex(ir_pad)-1)
     Vo = @views Vo_conv[1:param.blk_size_osr]
     Vo_mem = @views Vo_conv[param.blk_size_osr+1:end]
 end
@@ -184,10 +185,10 @@ end
 @kwdef mutable struct Splr
     const param::Param
 
-    
+
     ir::Vector{Float64}
 
-    Vo_conv::Vector = zeros(param.blk_size_osr+lastindex(ir)-1) 
+    Vo_conv::Vector = zeros(param.blk_size_osr+lastindex(ir)-1)
     Vo = @views Vo_conv[1:param.blk_size_osr]
     Vo_mem = @views Vo_conv[param.blk_size_osr+1:end]
 
@@ -209,7 +210,7 @@ end
     nphases = length(N_per_phi)
     noise_rms = 0.0
     ofst_std = 0.0
-    
+
     ofsts = [ofst_std*randn(n) for n in N_per_phi]
 
     dac_res = 8
@@ -224,7 +225,7 @@ end
 
 @kwdef mutable struct Cdr
     const param::Param
-    
+
     Neslc_per_phi::Vector
     nphases = length(Neslc_per_phi)
 
@@ -243,7 +244,7 @@ end
     pi_code = Int(floor(pd_accum))
 end
 
-@kwdef mutable struct Adpt 
+@kwdef mutable struct Adpt
     const param::Param
 
     Neslc_per_phi::Vector
@@ -258,7 +259,7 @@ end
     eslc_ref_code = floor(eslc_ref_accum)
     eslc_ref_vec = [eslc_ref_code*ones(Int,n) for n in Neslc_per_phi]
 
-    
+
 end
 
 @kwdef mutable struct Eye
@@ -294,7 +295,7 @@ end
     plot_every_nblk = Int(round(1e5/param.blk_size))
 
     sizex = 800
-    sizey = 840 
+    sizey = 840
     screen = GLMakie.Screen()
     fig = Figure(backgroundcolor = :white, size = (sizex, sizey));
     nrow::Int8 = 3
@@ -310,24 +311,29 @@ end
     buffer22 = Float64[]
 
     buffer31 = CircularBuffer{Float64}(8192)
-    
-    V11_x = Observable(zeros(1))
-    V11_y = Observable(zeros(1))
 
-    V21_x = Observable(zeros(1))
-    V21_y = Observable(zeros(1))
+    # V11_x = Observable(zeros(1))
+    # V11_y = Observable(zeros(1))
+    V11_xy = Observable(Point2f[])
 
-    V31_x = Observable(zeros(1))
-    V31_y = Observable(zeros(1))
+    # V21_x = Observable(zeros(1))
+    # V21_y = Observable(zeros(1))
+    V21_xy = Observable(Point2f[])
 
-    V12_x = Observable(zeros(1))
-    V12_y = Observable(zeros(1))
+    # V31_x = Observable(zeros(1))
+    # V31_y = Observable(zeros(1))
+    V31_xy = Observable(Point2f[])
 
-    V22_x = Observable(zeros(1))
-    V22_y = Observable(zeros(1))
+    # V12_x = Observable(zeros(1))
+    # V12_y = Observable(zeros(1))
+    V12_xy = Observable(Point2f[])
+
+    # V22_x = Observable(zeros(1))
+    # V22_y = Observable(zeros(1))
+    V22_xy = Observable(Point2f[])
 
     eye1 = Eye(param=param)
-    
+
     eslc_ref_ob = Observable(0.0)
 end
 

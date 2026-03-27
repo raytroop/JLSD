@@ -16,7 +16,7 @@ reset_limits!(trx.wvfm.axes[3,2])
 
 ber = trx.bist.ber_err_cnt/trx.bist.ber_bit_cnt
 println("BER = $ber")
-    
+
 # a = trx.drv.buffer_debug[10000:end];
 # b = u_unwrap_0x(a);
 
@@ -27,4 +27,4 @@ println("BER = $ber")
 # density!(Axis(f1[1,2]), b .- mean(b), boundary=jitter_bnd, npoints=200)
 
 
- 
+
