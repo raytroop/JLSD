@@ -18,7 +18,7 @@ function ch_top!(ch,Vi)
 
         u_conv!(ch.Vo_conv, ch.Vch, ir_pad, Vi_mem=Vo_mem, gain = dt)
     else
-        ch.Vo .= Vi 
+        ch.Vo .= Vi
     end
 
 end

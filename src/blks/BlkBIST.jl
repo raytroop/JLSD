@@ -63,7 +63,7 @@ end
 
 function ber_checker_top!(bist)
     @unpack cur_blk, pam, bits_per_sym = bist.param
-    @unpack gen_gray_map, chk_precode_prev_sym, chk_start_blk, Si, Si_bits = bist 
+    @unpack gen_gray_map, chk_precode_prev_sym, chk_start_blk, Si, Si_bits = bist
 
 
     if cur_blk >= chk_start_blk #make start blk a parameter later
@@ -71,13 +71,13 @@ function ber_checker_top!(bist)
             bist.chk_precode_prev_sym = Si[end]
             Si .= mod.([chk_precode_prev_sym; Si[1:end-1]].+ Si , pam)
         end
-    
+
         if ~isempty(gen_gray_map)
             for n in 1:blk_size
                 Si[n] = gen_gray_map[Si[n] + 1]
             end
         end
-    
+
         Si_bits .= vec(stack(int2bits.(Si, bits_per_sym)))
 
         ber_check_prbs!(bist)

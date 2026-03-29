@@ -6,17 +6,17 @@ include("./tb/Widget.jl")
 GLMakie.closeall()
 
 #global param for simulation
-param = TrxStruct.Param(  
+param = TrxStruct.Param(
     data_rate = 56e9,
     pam = 2,
     osr = 20,
     blk_size = 512,
-    subblk_size = 32, 
+    subblk_size = 32,
     nsym_total = Int(1e6))
 Random.seed!(param.rand_seed)
 
 #bist param
-bist = TrxStruct.Bist(  
+bist = TrxStruct.Bist(
     param = param,
     polynomial = TrxStruct.PRBS31)
 
@@ -36,7 +36,7 @@ drv = TrxStruct.Drv(
 #AWGN ch param
 ch = TrxStruct.Ch(
     param = param,
-    ir_ch = u_fr_to_imp("./channel_data/TF_data/channel_4inch.mat", 
+    ir_ch = u_fr_to_imp("./channel_data/TF_data/channel_4inch.mat",
             param.tui, param.osr, npre = 20, npost= 79),
     ir_pad = u_gen_ir_rc(param.dt, param.fbaud, 20*param.tui),
     noise_en = true,

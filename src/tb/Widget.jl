@@ -22,7 +22,7 @@ function make_widget(trx)
     #plot the eye diagram, pass the observable directly in
     sl_xofst = Slider(geye[1,1:2], range = -eye1.x_npts[]/2:eye1.x_npts[]/2-1, startvalue = 0)
     ax_eye = Axis(geye[2, 1:2])
-    heatmap!(ax_eye, eye1.x_grid, eye1.y_grid, eye1.heatmap_ob, 
+    heatmap!(ax_eye, eye1.x_grid, eye1.y_grid, eye1.heatmap_ob,
             colormap=eye1.colormap)
     xlims!(eye1.x_grid[][1], eye1.x_grid[][end])
 
@@ -51,15 +51,15 @@ function make_widget(trx)
     gctrl = GridLayout(fig[1:3,4:5])
     #run button
     btn_run = Button(gctrl[1,1], label ="Run", tellwidth=false, tellheight=false, width = 140, height=60, fontsize=28);
-    
+
     ch_lbl = ch.ch_en ? "Channel\nEnabled" : "Channel\nDisabled"
     btn_ch_en = Button(gctrl[1,2], label=ch_lbl, tellwidth = false, tellheight=false, width=100, height=60, fontsize=18);
- 
+
     #slider for after image weight
-    sl_config = SliderGrid(gctrl[2:3,:], 
-        (label="Avg factor",  range=0:10, startvalue=eye1.shadow_weight), 
-        (label="BG color",  range=0:0.01:1, startvalue=1.0), 
-        (label="Frame wait",  range=0:100, format = "{:d} ms", startvalue=0.0), 
+    sl_config = SliderGrid(gctrl[2:3,:],
+        (label="Avg factor",  range=0:10, startvalue=eye1.shadow_weight),
+        (label="BG color",  range=0:0.01:1, startvalue=1.0),
+        (label="Frame wait",  range=0:100, format = "{:d} ms", startvalue=0.0),
         tellheight=false, value_column_width=100)
 
     #sliders for TX/Channel parameters
@@ -84,7 +84,7 @@ function make_widget(trx)
 
 
 
-    #listeners   
+    #listeners
     eye_ofst = lift(sl_xofst.value) do val
         eye1.x_ofst = val
     end
@@ -128,8 +128,8 @@ function make_widget(trx)
 
     eye_buffer = Observable(splr.Vo)
     on(eye_buffer) do buffer
-        w_gen_eye_simple!(eye1.heatmap_ob[], buffer, 
-                        eye1.x_npts_ui[], eye1.x_npts[], eye1.y_range[], eye1.y_npts[]; 
+        w_gen_eye_simple!(eye1.heatmap_ob[], buffer,
+                        eye1.x_npts_ui[], eye1.x_npts[], eye1.y_range[], eye1.y_npts[];
                         osr = trx.param.osr, x_ofst=eye1.x_ofst, shadow = eye1.shadow_weight)
         eye1.heatmap_ob[] = eye1.heatmap_ob[]
         # eye1.heatmap_ob[] = randn(eye1.x_npts[],eye1.y_npts[])
@@ -139,10 +139,10 @@ function make_widget(trx)
     isrunning = Observable(false)
 
     run_func1 = on(btn_run.clicks) do clicks
-        isrunning[] = ~isrunning[]; 
+        isrunning[] = ~isrunning[];
         btn_run.label = isrunning[] ? "Stop" : "Run"
     end
-        
+
     run_func2 = on(btn_run.clicks) do clicks
         @async while isrunning[]
                 isopen(wvfm.fig.scene) || break
@@ -151,7 +151,7 @@ function make_widget(trx)
                 Φo_wrap = mod.(clkgen.Φo./param.osr .+ (eye1.x_ofst/eye1.x_npts_ui[]), eye1.x_nui[]).- (eye1.x_nui[]/2)
                 Φo_hist.val .*= eye1.shadow_weight
                 Φo_hist.val .+= (1-eye1.shadow_weight) .* u_hist(Φo_wrap, -eye1.x_nui[]/2, eye1.x_nui[]/2, eye1.x_npts[])
-                Φo_hist[] = Φo_hist[] 
+                Φo_hist[] = Φo_hist[]
 
                 yk_hist.val .*= eye1.shadow_weight
                 yk_hist.val .+= (1-eye1.shadow_weight) .* u_hist(splr.So, -eye1.y_range[]/2, eye1.y_range[]/2, eye1.y_npts[])
@@ -165,12 +165,12 @@ end
 
 
 function step_sim_blk(trx)
-    @unpack param, bist, drv, ch = trx 
+    @unpack param, bist, drv, ch = trx
 
     pam_gen_top!(bist)
 
     dac_drv_top!(drv, bist.So)
-    
+
     ch_top!(ch, drv.Vo)
 
     sample_itp_top!(splr, ch.Vo)
@@ -181,13 +181,13 @@ function step_sim_blk(trx)
 end
 
 function step_sim_subblk(trx, blk_idx)
-    @unpack clkgen, splr = trx 
+    @unpack clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt = trx
 
     trx.param.cur_subblk = blk_idx
 
     clkgen_pi_itp_top!(clkgen, pi_code=cdr.pi_code)
-        
+
     sample_phi_top!(splr, clkgen.Φo_subblk)
 
     slicers_top!(dslc, splr.So_subblk, ref_code=[[128],[128],[128],[128]])

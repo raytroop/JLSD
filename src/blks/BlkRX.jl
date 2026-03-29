@@ -12,7 +12,7 @@ function clkgen_pi_itp_top!(clkgen; pi_code)
     @unpack nphases, rj, skews = clkgen
     @unpack pi_code_prev, pi_wrap_ui, pi_wrap_ui_Δcode = clkgen
     @unpack pi_nonlin_lut, pi_ui_cover, pi_codes_per_ui = clkgen
-    
+
     Δpi_code = pi_code-pi_code_prev
     if abs(Δpi_code) > pi_wrap_ui_Δcode
         pi_wrap_ui -= sign(Δpi_code)*pi_ui_cover
@@ -25,7 +25,7 @@ function clkgen_pi_itp_top!(clkgen; pi_code)
     Φrj = rj/tui*osr*randn(subblk_size)
 
     @. clkgen.Φo_subblk = Φ0 + Φnom + Φskew + Φrj
-    
+
     clkgen.pi_code_prev = pi_code
     clkgen.pi_wrap_ui = pi_wrap_ui
     append!(clkgen.Φo, clkgen.Φo_subblk)
@@ -38,7 +38,7 @@ function sample_itp_top!(splr, Vi)
     @unpack osr,dt, blk_size_osr = splr.param
     @unpack ir, Vo_conv, Vo, Vo_mem = splr
     @unpack prev_nui, V_prev_nui, Vext, tt_Vext = splr
-    
+
     u_conv!(Vo_conv, Vi, ir, Vi_mem=Vo_mem, gain=dt)
 
     Vext[eachindex(V_prev_nui)] .= V_prev_nui
@@ -68,7 +68,7 @@ function slicers_top!(slc, Si; ref_code)
             slc.So[n] .=  (ref_lvl[phi_idx]
                             + ofsts[phi_idx]
                             + (noise_rms * randn(nslc))
-                            ) .< Si[n] 
+                            ) .< Si[n]
 
         end
     end
@@ -95,7 +95,7 @@ function cdr_top!(cdr, Sd, Se)
     cdr.pi_code = Int(floor(cdr.pd_accum))
 
 
-    cdr.Sd_prev = Sd_val[end]    
+    cdr.Sd_prev = Sd_val[end]
     cdr.ki_accum = ki_accum
 
 end
@@ -109,16 +109,16 @@ function adpt_top!(adpt, Sd, Se)
     ref_accum = adpt.eslc_ref_accum
 
     for n = findall(eslc_nvec.!=0)
-        ref_accum +=  (Sd_val[n:n+2] in eslc_filt_patterns) ? 
+        ref_accum +=  (Sd_val[n:n+2] in eslc_filt_patterns) ?
                         mu_eslc*sign(Se[n][1].-0.5) : 0
     end
-    adpt.eslc_ref_accum =   ref_accum < 0 ? 0 : 
+    adpt.eslc_ref_accum =   ref_accum < 0 ? 0 :
                             ref_accum > eslc_ref_max ? eslc_ref_max :
                             ref_accum
     adpt.eslc_ref_code = floor(adpt.eslc_ref_accum)
     adpt.eslc_ref_vec = [adpt.eslc_ref_code*ones(Int,n) for n in Neslc_per_phi]
 
-    adpt.Sd_prev = Sd_val[end]    
+    adpt.Sd_prev = Sd_val[end]
 end
 
 end

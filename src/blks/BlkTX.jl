@@ -31,8 +31,8 @@ function drv_add_jitter!(drv, Vfir)
     sj_amp_osr = sj_amp_ui*osr
     sj_freq_norm = sj_freq*tui
 
-    drv.last_sj_phi = drv_jitter_Δt!(Δtt; blk_size, osr, 
-                                        dcd, rj_osr, 
+    drv.last_sj_phi = drv_jitter_Δt!(Δtt; blk_size, osr,
+                                        dcd, rj_osr,
                                         sj_amp_osr, sj_freq_norm, last_sj_phi)
 
     Vext[eachindex(V_prev_nui)] .= V_prev_nui
@@ -53,7 +53,7 @@ function drv_jitter_Δt!(Δtt; blk_size, osr, dcd, rj_osr, sj_amp_osr, sj_freq_n
     Δtt[1:2:end] .+= dcd/2*osr
     Δtt[2:2:end] .-= dcd/2*osr
     Δtt .+= rj_osr .* randn(blk_size) #add rj
-    
+
     phi_sj = (last_sj_phi .+ (2π*sj_freq_norm) * (1:blk_size)) .% (2π)
     Δtt .+= sj_amp_osr .* sin.(phi_sj) #add sj
 
