@@ -176,7 +176,7 @@ function step_sim_blk(trx)
     ebuf_write!(ebuf, ch.Vo)
 
     # Always read exactly blk_size_osr samples so sample_itp_top! receives a fixed-size block.
-    Vrx = ebuf_read!(ebuf, min(param.blk_size_osr, ebuf_occupancy(ebuf)))
+    Vrx = ebuf_read!(ebuf, param.blk_size_osr)
 
     sample_itp_top!(splr, Vrx)
 

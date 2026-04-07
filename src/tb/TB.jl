@@ -154,7 +154,7 @@ function sim_blk(trx, blk_idx)
     # Always read exactly blk_size_osr samples so sample_itp_top! receives a fixed-size block.
     # Frequency offset is modeled via CDR phase drift in clkgen_pi_itp_top!; the elastic buffer
     # decouples the TX and RX clock domains so data is available across block boundaries.
-    Vrx = ebuf_read!(ebuf, min(param.blk_size_osr, ebuf_occupancy(ebuf)))
+    Vrx = ebuf_read!(ebuf, param.blk_size_osr)
 
     sample_itp_top!(splr, Vrx)
 

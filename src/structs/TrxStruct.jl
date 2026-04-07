@@ -45,7 +45,7 @@ end
     capacity::Int
     buffer::Vector{Float64} = zeros(capacity)
     wr_ptr::Int = 1
-    rd_ptr::Float64 = 1.0
+    rd_ptr::Float64 = 1.0  # Float64 to support fractional advancement in future extensions
     occupancy::Int = 0
     overflow_cnt::Int = 0
     underflow_cnt::Int = 0
