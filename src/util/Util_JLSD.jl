@@ -4,6 +4,7 @@ using StatsBase, DSP, Interpolations, FFTW, MAT
 export run_blk_iter
 export u_conv!, u_filt!
 export u_gen_ir_rc, u_fr_to_imp, u_hist, u_find_0x, u_unwrap_0x
+export ebuf_write!, ebuf_read!, ebuf_occupancy
 
 
 function run_blk_iter(trx, idx, n_tot_blk, blk_func::Function)
@@ -173,6 +174,45 @@ function u_fr_to_imp(f, H, Tsym, osr; npre=50, npost=200, savename = "", t_name=
     end
 
     return ir_itp
+end
+
+
+# ── Elastic Buffer (FIFO for TX/RX clock-domain decoupling) ─────────────────
+
+function ebuf_write!(ebuf, data::Vector{Float64})
+    n = length(data)
+    cap = ebuf.capacity
+    if ebuf.occupancy + n > cap
+        ebuf.overflow_cnt += 1
+        n = cap - ebuf.occupancy   # clamp to available space
+    end
+    for i in 1:n
+        ebuf.buffer[ebuf.wr_ptr] = data[i]
+        ebuf.wr_ptr = ebuf.wr_ptr % cap + 1
+    end
+    ebuf.occupancy += n
+    return nothing
+end
+
+function ebuf_read!(ebuf, n_samples::Int)::Vector{Float64}
+    cap = ebuf.capacity
+    if n_samples > ebuf.occupancy
+        ebuf.underflow_cnt += 1
+        n_samples = ebuf.occupancy   # clamp to available data
+    end
+    out = Vector{Float64}(undef, n_samples)
+    rd = Int(floor(ebuf.rd_ptr))
+    for i in 1:n_samples
+        out[i] = ebuf.buffer[rd]
+        rd = rd % cap + 1
+    end
+    ebuf.rd_ptr = Float64(rd)
+    ebuf.occupancy -= n_samples
+    return out
+end
+
+function ebuf_occupancy(ebuf)::Int
+    return ebuf.occupancy
 end
 
 end

@@ -3,7 +3,7 @@ using Parameters, DataStructures, DSP, FFTW
 using GLMakie, Makie, ColorSchemes
 
 
-export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm
+export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm, ElasticBuffer
 
 
 const PRBS7 = [6, 7]
@@ -32,11 +32,23 @@ const PRBS31 = [28,31]
     const nsym_total::Int64
     const nblk = Int(round(nsym_total/blk_size))
 
+    const freq_offset_ppm::Float64 = 0.0
+
     const rand_seed = 300
 
     cur_blk = 0
     cur_subblk = 0
 
+end
+
+@kwdef mutable struct ElasticBuffer
+    capacity::Int
+    buffer::Vector{Float64} = zeros(capacity)
+    wr_ptr::Int = 1
+    rd_ptr::Float64 = 1.0
+    occupancy::Int = 0
+    overflow_cnt::Int = 0
+    underflow_cnt::Int = 0
 end
 
 @kwdef mutable struct Bist

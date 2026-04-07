@@ -165,7 +165,7 @@ end
 
 
 function step_sim_blk(trx)
-    @unpack param, bist, drv, ch = trx
+    @unpack param, bist, drv, ch, ebuf, splr = trx
 
     pam_gen_top!(bist)
 
@@ -173,7 +173,12 @@ function step_sim_blk(trx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    ebuf_write!(ebuf, ch.Vo)
+
+    # Always read exactly blk_size_osr samples so sample_itp_top! receives a fixed-size block.
+    Vrx = ebuf_read!(ebuf, min(param.blk_size_osr, ebuf_occupancy(ebuf)))
+
+    sample_itp_top!(splr, Vrx)
 
     run_blk_iter(trx, 0, param.nsubblk, step_sim_subblk)
 
@@ -186,7 +191,7 @@ function step_sim_subblk(trx, blk_idx)
 
     trx.param.cur_subblk = blk_idx
 
-    clkgen_pi_itp_top!(clkgen, pi_code=cdr.pi_code)
+    clkgen_pi_itp_top!(clkgen, pi_code=cdr.pi_code, freq_offset_ppm=trx.param.freq_offset_ppm)
 
     sample_phi_top!(splr, clkgen.Φo_subblk)
 

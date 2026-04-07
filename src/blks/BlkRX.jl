@@ -7,7 +7,7 @@ export sample_itp_top!, sample_phi_top!, slicers_top!
 export cdr_top!, adpt_top!
 
 
-function clkgen_pi_itp_top!(clkgen; pi_code)
+function clkgen_pi_itp_top!(clkgen; pi_code, freq_offset_ppm=0.0)
     @unpack tui, osr, cur_subblk, subblk_size = clkgen.param
     @unpack nphases, rj, skews = clkgen
     @unpack pi_code_prev, pi_wrap_ui, pi_wrap_ui_Δcode = clkgen
@@ -20,7 +20,8 @@ function clkgen_pi_itp_top!(clkgen; pi_code)
 
     Φ0 = osr*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
     Φstart = (cur_subblk-1)*subblk_size*osr
-    Φnom = Φstart:osr:Φstart+(subblk_size-1)*osr
+    osr_rx = osr * (1.0 + freq_offset_ppm * 1e-6)
+    Φnom = Φstart:osr_rx:Φstart+(subblk_size-1)*osr_rx
     Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
     Φrj = rj/tui*osr*randn(subblk_size)
 

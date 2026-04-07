@@ -89,6 +89,9 @@ function init_trx()
                 Neslc_per_phi = eslc.N_per_phi,
                 mu_eslc = 1/64)
 
+    #elastic buffer between TX/CH block output and RX sub-block sampler
+    ebuf = TrxStruct.ElasticBuffer(capacity = 2 * param.blk_size_osr)
+
     #waveform plotting param
     wvfm = TrxStruct.Wvfm(
                 param = param,
@@ -106,7 +109,7 @@ function init_trx()
 
     println("init done")
 
-    return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+    return (;param, bist, drv, ch, ebuf, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
 end
 
 function sim_subblk(trx, blk_idx)
@@ -115,7 +118,7 @@ function sim_subblk(trx, blk_idx)
 
     param.cur_subblk = blk_idx
 
-    clkgen_pi_itp_top!(clkgen, pi_code=cdr.pi_code)
+    clkgen_pi_itp_top!(clkgen, pi_code=cdr.pi_code, freq_offset_ppm=param.freq_offset_ppm)
 
     sample_phi_top!(splr, clkgen.Φo_subblk)
 
@@ -133,7 +136,7 @@ function sim_subblk(trx, blk_idx)
 end
 
 function sim_blk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx
+    @unpack param, bist, drv, ch, ebuf, clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_blk = blk_idx
@@ -146,8 +149,14 @@ function sim_blk(trx, blk_idx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    ebuf_write!(ebuf, ch.Vo)
 
+    # Always read exactly blk_size_osr samples so sample_itp_top! receives a fixed-size block.
+    # Frequency offset is modeled via CDR phase drift in clkgen_pi_itp_top!; the elastic buffer
+    # decouples the TX and RX clock domains so data is available across block boundaries.
+    Vrx = ebuf_read!(ebuf, min(param.blk_size_osr, ebuf_occupancy(ebuf)))
+
+    sample_itp_top!(splr, Vrx)
 
     run_blk_iter(trx, 0, param.nsubblk, sim_subblk)
 
