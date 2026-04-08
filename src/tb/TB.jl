@@ -7,6 +7,7 @@ includet("../blks/BlkTX.jl"); using .BlkTX
 includet("../blks/BlkCH.jl"); using .BlkCH
 includet("../blks/BlkRX.jl"); using .BlkRX
 includet("../blks/WvfmGen.jl"); using .WvfmGen
+includet("../blks/BlkElasticBuffer.jl"); using .BlkElasticBuffer
 
 
 
@@ -106,11 +107,15 @@ function init_trx()
 
     println("init done")
 
-    return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+    eb = TrxStruct.ElasticBuffer(
+                capacity = 4 * param.blk_size_osr,
+                ppm_offset = 0.0)
+
+    return (;param, bist, drv, ch, eb, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
 end
 
 function sim_subblk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx
+    @unpack param, bist, drv, ch, eb, clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_subblk = blk_idx
@@ -133,7 +138,7 @@ function sim_subblk(trx, blk_idx)
 end
 
 function sim_blk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx
+    @unpack param, bist, drv, ch, eb, clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_blk = blk_idx
@@ -146,7 +151,11 @@ function sim_blk(trx, blk_idx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    eb_write!(eb, ch.Vo)
+    n_rx_samples = round(Int, param.blk_size_osr * (1 + eb.ppm_offset * 1e-6))
+    rx_data = eb_read!(eb, n_rx_samples)
+
+    sample_itp_top!(splr, rx_data)
 
 
     run_blk_iter(trx, 0, param.nsubblk, sim_subblk)

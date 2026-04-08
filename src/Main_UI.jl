@@ -96,7 +96,11 @@ wvfm.eye1.y_npts[] = 256
 
 println("init done")
 
-trx =  (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+eb = TrxStruct.ElasticBuffer(
+    capacity = 4 * param.blk_size_osr,
+    ppm_offset = 0.0)
+
+trx =  (;param, bist, drv, ch, eb, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
 
 
 @time make_widget(trx);

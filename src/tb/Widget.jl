@@ -7,6 +7,7 @@ includet("../blks/BlkTX.jl"); using .BlkTX
 includet("../blks/BlkCH.jl"); using .BlkCH
 includet("../blks/BlkRX.jl"); using .BlkRX
 includet("../blks/WvfmGen.jl"); using .WvfmGen
+includet("../blks/BlkElasticBuffer.jl"); using .BlkElasticBuffer
 
 function make_widget(trx)
     @unpack param, drv, ch, splr, clkgen, cdr = trx
@@ -165,7 +166,7 @@ end
 
 
 function step_sim_blk(trx)
-    @unpack param, bist, drv, ch = trx
+    @unpack param, bist, drv, ch, eb = trx
 
     pam_gen_top!(bist)
 
@@ -173,7 +174,11 @@ function step_sim_blk(trx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    eb_write!(eb, ch.Vo)
+    n_rx_samples = round(Int, param.blk_size_osr * (1 + eb.ppm_offset * 1e-6))
+    rx_data = eb_read!(eb, n_rx_samples)
+
+    sample_itp_top!(splr, rx_data)
 
     run_blk_iter(trx, 0, param.nsubblk, step_sim_subblk)
 

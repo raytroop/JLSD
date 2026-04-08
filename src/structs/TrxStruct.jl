@@ -3,7 +3,7 @@ using Parameters, DataStructures, DSP, FFTW
 using GLMakie, Makie, ColorSchemes
 
 
-export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm
+export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm, ElasticBuffer
 
 
 const PRBS7 = [6, 7]
@@ -335,6 +335,19 @@ end
     eye1 = Eye(param=param)
 
     eslc_ref_ob = Observable(0.0)
+end
+
+
+@kwdef mutable struct ElasticBuffer
+    const capacity::Int
+    buffer::Vector{Float64} = zeros(capacity)
+    wr_idx::Int = 0          # number of samples written (head pointer)
+    rd_idx::Int = 0          # number of samples read (tail pointer)
+    occupancy::Int = 0       # current number of valid samples in the buffer
+    overflow_cnt::Int = 0    # diagnostic: count of overflow events
+    underflow_cnt::Int = 0   # diagnostic: count of underflow events
+    ppm_offset::Float64 = 0.0  # TX-to-RX frequency offset in ppm
+    rx_phase_accum::Float64 = 0.0  # fractional phase accumulator for RX read rate
 end
 
 
