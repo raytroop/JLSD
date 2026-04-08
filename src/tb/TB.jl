@@ -1,11 +1,12 @@
 using GLMakie, Makie
-using UnPack, Random, Interpolations, ColorSchemes, Colors
+using UnPack, Random, Interpolations, ColorSchemes, Colors, DataStructures
 include("../structs/TrxStruct.jl"); #using .TrxStruct
 includet("../util/Util_JLSD.jl"); using .Util_JLSD
 includet("../blks/BlkBIST.jl"); using .BlkBIST
 includet("../blks/BlkTX.jl"); using .BlkTX
 includet("../blks/BlkCH.jl"); using .BlkCH
 includet("../blks/BlkRX.jl"); using .BlkRX
+includet("../blks/BlkElasticBuffer.jl"); using .BlkElasticBuffer
 includet("../blks/WvfmGen.jl"); using .WvfmGen
 
 
@@ -89,6 +90,12 @@ function init_trx()
                 Neslc_per_phi = eslc.N_per_phi,
                 mu_eslc = 1/64)
 
+    #elastic buffer for TX/RX clock domain decoupling
+    eb = TrxStruct.ElasticBuffer(
+                depth = 4 * param.blk_size_osr,
+                fifo = DataStructures.CircularBuffer{Float64}(4 * param.blk_size_osr),
+                ppm_offset = 0.0)
+
     #waveform plotting param
     wvfm = TrxStruct.Wvfm(
                 param = param,
@@ -106,7 +113,7 @@ function init_trx()
 
     println("init done")
 
-    return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+    return (;param, bist, drv, ch, eb, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
 end
 
 function sim_subblk(trx, blk_idx)
@@ -133,7 +140,7 @@ function sim_subblk(trx, blk_idx)
 end
 
 function sim_blk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx
+    @unpack param, bist, drv, ch, eb, clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_blk = blk_idx
@@ -146,7 +153,11 @@ function sim_blk(trx, blk_idx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    eb_write!(eb, ch.Vo)
+    n_rx_samples = round(Int, param.blk_size_osr * (1 + eb.ppm_offset * 1e-6))
+    rx_data = eb_read!(eb, n_rx_samples)
+
+    sample_itp_top!(splr, rx_data)
 
 
     run_blk_iter(trx, 0, param.nsubblk, sim_subblk)
