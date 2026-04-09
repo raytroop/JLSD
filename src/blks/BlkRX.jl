@@ -13,18 +13,23 @@ function clkgen_pi_itp_top!(clkgen; pi_code)
     @unpack pi_code_prev, pi_wrap_ui, pi_wrap_ui_Δcode = clkgen
     @unpack pi_nonlin_lut, pi_ui_cover, pi_codes_per_ui = clkgen
 
+    freq_offset_ppm = clkgen.param.freq_offset_ppm
+    osr_rx = osr / (1 + freq_offset_ppm * 1e-6)
+
     Δpi_code = pi_code-pi_code_prev
     if abs(Δpi_code) > pi_wrap_ui_Δcode
         pi_wrap_ui -= sign(Δpi_code)*pi_ui_cover
     end
 
-    Φ0 = osr*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
-    Φstart = (cur_subblk-1)*subblk_size*osr
-    Φnom = Φstart:osr:Φstart+(subblk_size-1)*osr
-    Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
-    Φrj = rj/tui*osr*randn(subblk_size)
+    Φ0 = osr_rx*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
+    Φstart = clkgen.Φo_start
+    Φnom = Φstart:osr_rx:Φstart+(subblk_size-1)*osr_rx
+    Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr_rx)
+    Φrj = rj/tui*osr_rx*randn(subblk_size)
 
     @. clkgen.Φo_subblk = Φ0 + Φnom + Φskew + Φrj
+
+    clkgen.Φo_start = Φstart + subblk_size * osr_rx
 
     clkgen.pi_code_prev = pi_code
     clkgen.pi_wrap_ui = pi_wrap_ui
@@ -34,7 +39,7 @@ end
 
 
 
-function sample_itp_top!(splr, Vi)
+function sample_itp_top!(splr, Vi; t_start=nothing)
     @unpack osr,dt, blk_size_osr = splr.param
     @unpack ir, Vo_conv, Vo, Vo_mem = splr
     @unpack prev_nui, V_prev_nui, Vext, tt_Vext = splr
@@ -43,7 +48,13 @@ function sample_itp_top!(splr, Vi)
 
     Vext[eachindex(V_prev_nui)] .= V_prev_nui
     Vext[lastindex(V_prev_nui)+1:end] .= Vo
-    splr.itp_Vext = linear_interpolation(tt_Vext, Vext)
+    if t_start === nothing
+        splr.itp_Vext = linear_interpolation(tt_Vext, Vext)
+    else
+        n_vext = length(Vext)
+        tt_local = range(t_start - prev_nui*osr, step=1.0, length=n_vext)
+        splr.itp_Vext = linear_interpolation(tt_local, Vext)
+    end
 end
 
 function sample_phi_top!(splr, Φi)

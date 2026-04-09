@@ -6,10 +6,11 @@ includet("../blks/BlkBIST.jl"); using .BlkBIST
 includet("../blks/BlkTX.jl"); using .BlkTX
 includet("../blks/BlkCH.jl"); using .BlkCH
 includet("../blks/BlkRX.jl"); using .BlkRX
+includet("../blks/BlkElasticBuffer.jl"); using .BlkElasticBuffer
 includet("../blks/WvfmGen.jl"); using .WvfmGen
 
 function make_widget(trx)
-    @unpack param, drv, ch, splr, clkgen, cdr = trx
+    @unpack param, drv, ch, splr, clkgen, cdr, ebuf = trx
     @unpack fig, screen, eye1 = trx.wvfm
 
 
@@ -74,12 +75,13 @@ function make_widget(trx)
         (label = "CH noise", range=-150:.5:-130, format = "{:.1f} dBm/Hz", startvalue = ch.noise_dbm_hz),
         tellheight=false, value_column_width=100)
 
-    #enable channel button
+    #sliders for RX parameters
     sl_rx = SliderGrid(gctrl[6:7,:],
         (label = "RX CDR Kp", range= 10:-1:0, format = "1/2^{:d}", startvalue = round(Int,-log2(cdr.kp))),
         (label = "RX CDR Ki", range= [32; 20:-1:8], format = "1/2^{:d}", startvalue = round(Int,-log2(cdr.ki))),
         (label = "RX IQ skew", range= -3:0.1:3, format = "{:.1f} ps", startvalue = clkgen.skews[2]/1e-12),
         (label = "RX RJ", range= 0:0.1:2, format = "{:.1f} ps", startvalue = clkgen.rj/1e-12),
+        (label = "Freq offset", range= -200:1:200, format = "{:d} ppm", startvalue = 0),
         tellheight=false, value_column_width=100)
 
 
@@ -122,7 +124,8 @@ function make_widget(trx)
         cdr.ki = 1.0/2^slvals[2]
         clkgen.skews[[2,4]] .= slvals[3]*1e-12
         clkgen.rj = slvals[4]*1e-12
-
+        trx.param.freq_offset_ppm = Float64(slvals[5])
+        trx.ebuf.ppm = Float64(slvals[5])
     end
 
 
@@ -165,7 +168,7 @@ end
 
 
 function step_sim_blk(trx)
-    @unpack param, bist, drv, ch = trx
+    @unpack param, bist, drv, ch, clkgen, splr, ebuf = trx
 
     pam_gen_top!(bist)
 
@@ -173,11 +176,32 @@ function step_sim_blk(trx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    eb_write!(ebuf, ch.Vo)
 
-    run_blk_iter(trx, 0, param.nsubblk, step_sim_subblk)
+    blk_data = eb_read!(ebuf, param.blk_size_osr)
 
+    t_start = param.cur_blk * param.blk_size_osr
+    sample_itp_top!(splr, blk_data, t_start=t_start)
 
+    freq_offset_ppm = param.freq_offset_ppm
+    osr_rx = param.osr / (1 + freq_offset_ppm * 1e-6)
+    subblk_size_osr_min = floor(Int, param.subblk_size * osr_rx * 0.5)
+
+    subblk_idx = 0
+    clkgen.Φo_start = t_start
+    while true
+        subblk_idx += 1
+        next_start = clkgen.Φo_start + param.subblk_size * osr_rx
+        if next_start > t_start + param.blk_size_osr + subblk_size_osr_min
+            break
+        end
+        if subblk_idx > param.nsubblk + 2
+            break
+        end
+        step_sim_subblk(trx, subblk_idx)
+    end
+
+    param.cur_blk += 1
 end
 
 function step_sim_subblk(trx, blk_idx)

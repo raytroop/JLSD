@@ -6,6 +6,7 @@ includet("../blks/BlkBIST.jl"); using .BlkBIST
 includet("../blks/BlkTX.jl"); using .BlkTX
 includet("../blks/BlkCH.jl"); using .BlkCH
 includet("../blks/BlkRX.jl"); using .BlkRX
+includet("../blks/BlkElasticBuffer.jl"); using .BlkElasticBuffer
 includet("../blks/WvfmGen.jl"); using .WvfmGen
 
 
@@ -106,12 +107,16 @@ function init_trx()
 
     println("init done")
 
-    return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+    ebuf = TrxStruct.ElasticBuffer(
+        param = param,
+        ppm = param.freq_offset_ppm)
+
+    return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm, ebuf)
 end
 
 function sim_subblk(trx, blk_idx)
     @unpack param, bist, drv, ch, clkgen, splr = trx
-    @unpack dslc, eslc, cdr, adpt, wvfm = trx
+    @unpack dslc, eslc, cdr, adpt, wvfm, ebuf = trx
 
     param.cur_subblk = blk_idx
 
@@ -134,7 +139,7 @@ end
 
 function sim_blk(trx, blk_idx)
     @unpack param, bist, drv, ch, clkgen, splr = trx
-    @unpack dslc, eslc, cdr, adpt, wvfm = trx
+    @unpack dslc, eslc, cdr, adpt, wvfm, ebuf = trx
 
     param.cur_blk = blk_idx
 
@@ -142,14 +147,34 @@ function sim_blk(trx, blk_idx)
 
     dac_drv_top!(drv, bist.So)
 
-    # append!(drv.buffer_debug, mod.(u_find_0x(drv.Vo), param.osr) ./ param.osr)
-
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    eb_write!(ebuf, ch.Vo)
 
+    # Read blk_size_osr samples from elastic buffer to build interpolator
+    blk_data = eb_read!(ebuf, param.blk_size_osr)
 
-    run_blk_iter(trx, 0, param.nsubblk, sim_subblk)
+    t_start = (blk_idx - 1) * param.blk_size_osr
+    sample_itp_top!(splr, blk_data, t_start=t_start)
+
+    # Variable sub-block loop driven by RX rate
+    freq_offset_ppm = param.freq_offset_ppm
+    osr_rx = param.osr / (1 + freq_offset_ppm * 1e-6)
+    subblk_size_osr_min = floor(Int, param.subblk_size * osr_rx * 0.5)
+
+    subblk_idx = 0
+    clkgen.Φo_start = t_start
+    while true
+        subblk_idx += 1
+        next_start = clkgen.Φo_start + param.subblk_size * osr_rx
+        if next_start > t_start + param.blk_size_osr + subblk_size_osr_min
+            break
+        end
+        if subblk_idx > param.nsubblk + 2
+            break  # safety guard
+        end
+        sim_subblk(trx, subblk_idx)
+    end
 
     ber_checker_top!(bist)
 

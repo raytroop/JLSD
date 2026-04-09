@@ -3,7 +3,7 @@ using Parameters, DataStructures, DSP, FFTW
 using GLMakie, Makie, ColorSchemes
 
 
-export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm
+export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm, ElasticBuffer
 
 
 const PRBS7 = [6, 7]
@@ -37,6 +37,7 @@ const PRBS31 = [28,31]
     cur_blk = 0
     cur_subblk = 0
 
+    freq_offset_ppm::Float64 = 0.0
 end
 
 @kwdef mutable struct Bist
@@ -179,6 +180,7 @@ end
 
     Φo = CircularBuffer{Float64}(param.blk_size)
     Φo_subblk::Vector = zeros(param.subblk_size)
+    Φo_start::Float64 = 0.0
 
 end
 
@@ -335,6 +337,15 @@ end
     eye1 = Eye(param=param)
 
     eslc_ref_ob = Observable(0.0)
+end
+
+@kwdef mutable struct ElasticBuffer
+    const param::Param
+    buf::CircularBuffer{Float64} = CircularBuffer{Float64}(4 * param.blk_size_osr)
+    ppm::Float64 = 0.0
+    rd_residual::Float64 = 0.0
+    n_overflow::Int = 0
+    n_underflow::Int = 0
 end
 
 
