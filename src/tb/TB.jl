@@ -1,11 +1,12 @@
 using GLMakie, Makie
-using UnPack, Random, Interpolations, ColorSchemes, Colors
+using UnPack, Random, Interpolations, ColorSchemes, Colors, DataStructures
 include("../structs/TrxStruct.jl"); #using .TrxStruct
 includet("../util/Util_JLSD.jl"); using .Util_JLSD
 includet("../blks/BlkBIST.jl"); using .BlkBIST
 includet("../blks/BlkTX.jl"); using .BlkTX
 includet("../blks/BlkCH.jl"); using .BlkCH
 includet("../blks/BlkRX.jl"); using .BlkRX
+includet("../blks/BlkElasticBuf.jl"); using .BlkElasticBuf
 includet("../blks/WvfmGen.jl"); using .WvfmGen
 
 
@@ -102,15 +103,28 @@ function init_trx()
     cm_turbo.colors[1] = RGB(1.0,1.0,1.0)
     wvfm.eye1.colormap = cm_turbo
 
+    # Elastic buffer between channel output and RX sampler.
+    # Set ppm ≠ 0 to model a TX/RX clock frequency offset:
+    #   ppm > 0 → TX faster than RX (buffer fills; TX samples are occasionally dropped)
+    #   ppm < 0 → TX slower than RX (buffer drains; samples are occasionally duplicated)
+    # The FIFO capacity is 4× blk_size_osr; it is pre-filled with one block of zeros
+    # so the first read never underflows.
+    ebuf = TrxStruct.ElasticBuf(
+                param = param,
+                ppm = 0.0,
+                buf = CircularBuffer{Float64}(4 * param.blk_size_osr),
+                Vo = zeros(param.blk_size_osr))
+    append!(ebuf.buf, zeros(param.blk_size_osr))
+
     init_plot(wvfm)
 
     println("init done")
 
-    return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+    return (;param, bist, drv, ch, ebuf, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
 end
 
 function sim_subblk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx
+    @unpack param, bist, drv, ch, ebuf, clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_subblk = blk_idx
@@ -133,7 +147,7 @@ function sim_subblk(trx, blk_idx)
 end
 
 function sim_blk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx
+    @unpack param, bist, drv, ch, ebuf, clkgen, splr = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_blk = blk_idx
@@ -146,7 +160,13 @@ function sim_blk(trx, blk_idx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    # Elastic buffer: absorb TX/RX frequency offset between channel and RX sampler.
+    # Write the channel output into the FIFO, then read back blk_size_osr samples
+    # with any required sample drops (ppm > 0) or duplications (ppm < 0).
+    elastic_buf_write!(ebuf, ch.Vo)
+    elastic_buf_read!(ebuf)
+
+    sample_itp_top!(splr, ebuf.Vo)
 
 
     run_blk_iter(trx, 0, param.nsubblk, sim_subblk)

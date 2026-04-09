@@ -3,7 +3,7 @@ using Parameters, DataStructures, DSP, FFTW
 using GLMakie, Makie, ColorSchemes
 
 
-export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm
+export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm, ElasticBuf
 
 
 const PRBS7 = [6, 7]
@@ -335,6 +335,52 @@ end
     eye1 = Eye(param=param)
 
     eslc_ref_ob = Observable(0.0)
+end
+
+"""
+    ElasticBuf
+
+Models the elastic buffer placed between the channel output (TX domain) and the
+RX sampler input, used to absorb the frequency offset between the TX and RX clocks.
+
+## Frequency offset convention
+- `ppm > 0`: TX clock is faster than RX clock.  The TX produces samples slightly
+  faster than the RX consumes them.  Over time the buffer fills; every `1e6/ppm`
+  samples a TX sample is dropped before forwarding to the RX.
+- `ppm < 0`: TX clock is slower than RX clock.  The buffer drains; every
+  `1e6/|ppm|` RX-side samples, a sample is duplicated to prevent underflow.
+- `ppm = 0` (default): no frequency offset; the buffer is a transparent pass-through.
+
+## Fields
+- `ppm`: frequency offset in parts-per-million (TX rate − RX rate, normalised).
+- `buf`: internal circular FIFO that decouples the TX write rate from the RX read
+  rate.  Pre-fill it with one block of zeros before the first read so that the
+  first block never underflows.
+- `Vo`: pre-allocated output vector (length = `blk_size_osr`) written by
+  `elastic_buf_read!` and forwarded to the RX sampler (`sample_itp_top!`).
+- `accum`: fractional sample accumulator that drives the insert/drop decision.
+- `n_dropped`: cumulative count of TX samples dropped (positive ppm case).
+- `n_duplicated`: cumulative count of RX samples duplicated (negative ppm case).
+"""
+@kwdef mutable struct ElasticBuf
+    const param::Param
+
+    # Frequency offset in PPM (TX clock minus RX clock, normalised to nominal rate).
+    ppm::Float64 = 0.0
+
+    # Internal FIFO for OSR-rate samples.  Capacity should be several blk_size_osr
+    # units so that both positive and negative ppm have headroom.
+    buf::CircularBuffer{Float64}
+
+    # Pre-allocated output vector (blk_size_osr entries) written by elastic_buf_read!.
+    Vo::Vector{Float64}
+
+    # Fractional sample accumulator (dimensionless, units of samples).
+    accum::Float64 = 0.0
+
+    # Diagnostic counters.
+    n_dropped::Int = 0
+    n_duplicated::Int = 0
 end
 
 
