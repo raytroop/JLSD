@@ -3,7 +3,7 @@ using Parameters, DataStructures, DSP, FFTW
 using GLMakie, Makie, ColorSchemes
 
 
-export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm
+export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm, ElasticBuffer
 
 
 const PRBS7 = [6, 7]
@@ -33,6 +33,14 @@ const PRBS31 = [28,31]
     const nblk = Int(round(nsym_total/blk_size))
 
     const rand_seed = 300
+
+    # Frequency offset between TX and RX clocks.
+    # freq_offset_ppm > 0 means RX clock is faster than TX:
+    #   f_rx = f_tx * (1 + freq_offset_ppm * 1e-6)
+    # RX UI spacing in TX-grid sample units:
+    #   osr_rx = osr / (1 + freq_offset_ppm * 1e-6)
+    const freq_offset_ppm::Float64 = 0.0
+    const osr_rx::Float64 = osr / (1 + freq_offset_ppm * 1e-6)
 
     cur_blk = 0
     cur_subblk = 0
@@ -335,6 +343,42 @@ end
     eye1 = Eye(param=param)
 
     eslc_ref_ob = Observable(0.0)
+end
+
+
+"""
+    ElasticBuffer
+
+Ring buffer that models frequency offset between TX and RX clocks by
+decoupling TX waveform production from RX sampling.
+
+The buffer stores the RX-filtered waveform on the TX simulation grid.
+TX writes samples extending `t_tx_max`; RX reads at float times near
+`t_rx` using linear interpolation, advancing by `osr_rx` per symbol.
+
+Sign convention: `freq_offset_ppm > 0` means RX clock is faster than TX,
+so `t_rx` advances faster than `t_tx_max` and buffer occupancy decreases
+over time (eventually triggering underflow).
+
+Tracked frontiers (all in TX-grid sample-index units):
+- `t_tx_min`: oldest sample index still available in the ring buffer
+- `t_tx_max`: exclusive write frontier (total samples written so far)
+- `t_rx`:     RX read cursor (Float64, persists across blocks)
+"""
+@kwdef mutable struct ElasticBuffer
+    const param::Param
+    # Ring buffer capacity in TX-grid samples (default: 4 TX blocks)
+    const capacity::Int = 4 * param.blk_size_osr
+    # Circular storage (index via `t % capacity + 1`)
+    buf::Vector{Float64} = zeros(capacity)
+    # Time frontiers (integer TX-grid sample indices)
+    t_tx_min::Int = 0   # oldest available sample (inclusive)
+    t_tx_max::Int = 0   # exclusive write frontier
+    # RX time cursor (float TX-grid sample units, persists across blocks)
+    t_rx::Float64 = 0.0
+    # Overflow / underflow event counters
+    overflow_cnt::Int  = 0
+    underflow_cnt::Int = 0
 end
 
 
