@@ -39,8 +39,9 @@ const PRBS31 = [28,31]
     #   f_rx = f_tx * (1 + freq_offset_ppm * 1e-6)
     # RX UI spacing in TX-grid sample units:
     #   osr_rx = osr / (1 + freq_offset_ppm * 1e-6)
-    const freq_offset_ppm::Float64 = 0.0
-    const osr_rx::Float64 = osr / (1 + freq_offset_ppm * 1e-6)
+    # These are mutable so that the Widget UI slider can update them at runtime.
+    freq_offset_ppm::Float64 = 0.0
+    osr_rx::Float64 = osr / (1 + freq_offset_ppm * 1e-6)
 
     cur_blk = 0
     cur_subblk = 0

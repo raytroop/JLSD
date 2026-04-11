@@ -80,6 +80,7 @@ function make_widget(trx)
         (label = "RX CDR Ki", range= [32; 20:-1:8], format = "1/2^{:d}", startvalue = round(Int,-log2(cdr.ki))),
         (label = "RX IQ skew", range= -3:0.1:3, format = "{:.1f} ps", startvalue = clkgen.skews[2]/1e-12),
         (label = "RX RJ", range= 0:0.1:2, format = "{:.1f} ps", startvalue = clkgen.rj/1e-12),
+        (label = "RX freq offset", range= -500:10:500, format = "{:d} ppm", startvalue = round(Int, param.freq_offset_ppm)),
         tellheight=false, value_column_width=100)
 
 
@@ -122,7 +123,8 @@ function make_widget(trx)
         cdr.ki = 1.0/2^slvals[2]
         clkgen.skews[[2,4]] .= slvals[3]*1e-12
         clkgen.rj = slvals[4]*1e-12
-
+        param.freq_offset_ppm = Float64(slvals[5])
+        param.osr_rx = param.osr / (1 + param.freq_offset_ppm * 1e-6)
     end
 
 
