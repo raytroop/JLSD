@@ -1,6 +1,5 @@
 module BlkRX
 using UnPack, DSP, Random, Interpolations
-include("../structs/TrxStruct.jl")
 include("../util/Util_JLSD.jl"); using .Util_JLSD
 
 export clkgen_pi_itp_top!
@@ -26,7 +25,7 @@ After writing:
 - Detects **overflow**: if the stored window exceeds `eb.capacity`, the
   oldest samples are dropped and `eb.overflow_cnt` is incremented.
 """
-function eb_write!(eb::TrxStruct.ElasticBuffer, waveform::AbstractVector{Float64})
+function eb_write!(eb, waveform::AbstractVector{Float64})
     # Reclaim samples already consumed by RX
     eb.t_tx_min = max(eb.t_tx_min, floor(Int, eb.t_rx))
 
@@ -65,7 +64,7 @@ Checks that:
 This function has **no side effects** (no counters modified).  Underflow and
 overflow are counted exclusively in `eb_write!` at TX-block boundaries.
 """
-function eb_can_read_subblk(eb::TrxStruct.ElasticBuffer; margin::Int = 1)
+function eb_can_read_subblk(eb; margin::Int = 1)
     osr_rx      = eb.param.osr_rx
     subblk_size = eb.param.subblk_size
     # Last sample time needed (plus one for the k+1 linear-interpolation term)
@@ -82,7 +81,7 @@ end
 Linear interpolation of the elastic buffer waveform at float TX-grid time
 `t`.  Caller must ensure `t` is within `[eb.t_tx_min, eb.t_tx_max - 1]`.
 """
-function eb_interp(eb::TrxStruct.ElasticBuffer, t::Float64)
+function eb_interp(eb, t::Float64)
     k0       = floor(Int, t)
     frac     = t - k0
     capacity = eb.capacity
@@ -107,7 +106,7 @@ here; the caller (the block-iteration loop) is responsible for doing
     eb.t_rx += subblk_size * osr_rx
 so that cursor management is centralised in one place.
 """
-function clkgen_pi_itp_top!(clkgen, eb::TrxStruct.ElasticBuffer; pi_code)
+function clkgen_pi_itp_top!(clkgen, eb; pi_code)
     @unpack tui, osr, osr_rx, subblk_size = clkgen.param
     @unpack nphases, rj, skews = clkgen
     @unpack pi_code_prev, pi_wrap_ui, pi_wrap_ui_Δcode = clkgen
@@ -177,7 +176,7 @@ Sample the elastic buffer `eb` at the absolute TX-grid times in `Φi`
 using linear interpolation, storing results in `splr.So_subblk` and
 appending to `splr.So`.
 """
-function sample_phi_top!(splr, eb::TrxStruct.ElasticBuffer, Φi)
+function sample_phi_top!(splr, eb, Φi)
     for j = eachindex(Φi)
         splr.So_subblk[j] = eb_interp(eb, Φi[j])
     end
