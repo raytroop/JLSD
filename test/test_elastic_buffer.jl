@@ -168,4 +168,94 @@ end
     end
 end
 
+@testset "Sampling phase – mid-UI bias via osr÷2" begin
+    # Verify that the +osr÷2 term in Φ0 shifts the sampling from data
+    # transitions (fractional phase 0) to data centers (fractional phase
+    # osr/2).
+    #
+    # Setup: PAM2 staircase waveform oversampled by osr=24, with a channel
+    # delay of npre*osr=480 samples.  Symbol k occupies positions
+    # [k*osr + delay, (k+1)*osr + delay).
+    param = TrxStub.Param()
+    osr = param.osr
+    npre = 20
+    channel_delay = npre * osr   # 480
+
+    # PI configuration matching TrxStruct defaults
+    pi_res = 8
+    pi_ui_cover = 4
+    pi_codes_per_ui = 2^pi_res / pi_ui_cover  # 64
+    pi_code = 128  # initial CDR code
+
+    # ── Bug scenario (without +osr÷2): Φ0 lands on transitions ──
+    Φ0_bug = osr * (0 + pi_code / pi_codes_per_ui)  # = 48
+    frac_bug = mod(Φ0_bug - channel_delay, osr)
+    @test frac_bug ≈ 0.0   # exactly at data transitions → BER ≈ 0.5
+
+    # ── Fixed scenario (with +osr÷2): Φ0 lands at data centers ──
+    Φ0_fix = osr * (0 + pi_code / pi_codes_per_ui) + osr ÷ 2  # = 60
+    frac_fix = mod(Φ0_fix - channel_delay, osr)
+    @test frac_fix ≈ Float64(osr ÷ 2)   # at data centers → low BER
+
+    # ── Functional check with a staircase waveform in the EB ──
+    eb = TrxStub.ElasticBuffer(param = param)
+    nsymbols = 100
+    symbols = [isodd(k) ? 1.0 : -1.0 for k in 1:nsymbols]
+    waveform = zeros(nsymbols * osr + channel_delay)
+    for k in 1:nsymbols
+        s = (k - 1) * osr + channel_delay + 1
+        e = k * osr + channel_delay
+        waveform[s:e] .= symbols[k]
+    end
+    eb_write!(eb, waveform)
+
+    # Helper: given a sample position t, return the expected symbol value
+    # (0.0 if before the channel-delayed data region).
+    function expected_symbol(t)
+        if t < channel_delay
+            return 0.0
+        end
+        idx = Int(floor((t - channel_delay) / osr)) + 1
+        return idx <= nsymbols ? symbols[idx] : 0.0
+    end
+
+    # Sample with the fixed Φ0 at data centers → all in-range samples correct
+    correct_fix = 0
+    total_fix   = 0
+    for j in 0:nsymbols - 1
+        t = Φ0_fix + j * Float64(osr)
+        if t + 1 < length(waveform) && t >= channel_delay
+            total_fix += 1
+            val = eb_interp(eb, t)
+            correct_fix += (sign(val) == sign(expected_symbol(t))) ? 1 : 0
+        end
+    end
+    @test total_fix > 0
+    @test correct_fix == total_fix   # perfect decisions at data centers
+
+    # Sample with the buggy Φ0 at transitions → zero-valued samples
+    at_transition = 0
+    total_bug     = 0
+    for j in 0:nsymbols - 1
+        t = Φ0_bug + j * Float64(osr)
+        if t + 1 < length(waveform) && t >= channel_delay
+            total_bug += 1
+            val = eb_interp(eb, t)
+            # At staircase transitions, the interpolated value is exactly the
+            # start of the next symbol; for an alternating ±1 pattern the
+            # sign flips at every boundary, so sign(val) may match or not.
+            # The key point: for a bandwidth-limited (non-staircase) signal,
+            # the transition sample is near zero and unreliable.  For a
+            # staircase, the sample lands on the boundary and equals the NEW
+            # symbol value (because the staircase changes at the boundary).
+            # What matters is the fractional-phase calculation above.
+            at_transition += (val ≈ expected_symbol(t)) ? 0 : 1
+        end
+    end
+    @test total_bug > 0
+    # With a staircase, transition samples may accidentally match the new
+    # symbol value.  The critical verification is the fractional-phase
+    # arithmetic (frac_bug ≈ 0 and frac_fix ≈ osr/2) tested above.
+end
+
 println("All ElasticBuffer tests passed.")

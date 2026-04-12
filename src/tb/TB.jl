@@ -159,8 +159,13 @@ function sim_blk(trx, blk_idx)
 
     # Dynamic sub-block scheduling: run as many RX sub-blocks as the buffer
     # can support (naturally handles non-integer TX/RX clock relationships).
+    # Margin must cover the maximum CDR phase offset (Φ0) added to sampling
+    # positions by clkgen_pi_itp_top!: up to pi_ui_cover UI plus the half-UI
+    # bias, converted to TX-grid samples, plus 1 for the interpolation k+1
+    # term.
+    cdr_margin = Int(ceil(clkgen.pi_ui_cover * param.osr + param.osr / 2)) + 1
     subblk_count = 0
-    while eb_can_read_subblk(eb)
+    while eb_can_read_subblk(eb, margin=cdr_margin)
         param.cur_subblk = subblk_count + 1
         sim_subblk(trx, subblk_count + 1)
         eb.t_rx += param.subblk_size * param.osr_rx

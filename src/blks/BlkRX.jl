@@ -117,8 +117,13 @@ function clkgen_pi_itp_top!(clkgen, eb; pi_code)
         pi_wrap_ui -= sign(Δpi_code)*pi_ui_cover
     end
 
-    # CDR phase offset in TX-grid sample units (uses integer osr for PI scale)
-    Φ0    = osr*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
+    # CDR phase offset in TX-grid sample units (uses integer osr for PI scale).
+    # The +osr÷2 bias places the nominal sampling point at mid-UI (data
+    # center) rather than at data transitions.  Without this term, Φ0 is an
+    # integer multiple of osr whenever pi_code is a multiple of
+    # pi_codes_per_ui, which coincides exactly with the TX data-edge grid
+    # after any channel whose delay is also an integer number of UI.
+    Φ0    = osr*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui) + osr÷2
     Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
     Φrj   = rj/tui*osr*randn(subblk_size)
 
