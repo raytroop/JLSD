@@ -18,7 +18,8 @@ function init_trx()
                 osr = 24,
                 blk_size = 2^10,
                 subblk_size = 32,
-                nsym_total = Int(1e6))
+                nsym_total = Int(1e6),
+                freq_offset_ppm = 100.0)
     Random.seed!(param.rand_seed)
 
     #bist param
