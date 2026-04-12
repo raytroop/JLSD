@@ -125,9 +125,14 @@ function ber_check_prbs!(bist)
             if bist.chk_lock_cnt == bist.chk_lock_cnt_threshold
                 bist.chk_lock_status = true
                 println("prbs locked")
-                ~, chk_seed = bist_prbs_gen(poly=polynomial, inv=inv,
-                                            Nsym=nbits_rcvd-n, seed=chk_seed)
-                #run prbs towards the end of the block to get the right seed
+                remaining = nbits_rcvd - n
+                if remaining > 0
+                    resize!(ref_bits, remaining)
+                    bist_prbs_gen!(ref_bits, poly=polynomial, inv=inv,
+                                   Nsym=remaining, seed=chk_seed)
+                    bist.ber_err_cnt += sum((@view Si_bits[n+1:end]) .⊻ ref_bits)
+                    bist.ber_bit_cnt += remaining
+                end
                 break
             end
         end
