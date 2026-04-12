@@ -71,7 +71,7 @@ end
 
     So_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
     So::Vector = zeros(param.blk_size)
-    Si = CircularBuffer{UInt8}(param.blk_size)
+    Si::Vector{UInt8} = UInt8[]
     Si_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
 
 end

@@ -63,25 +63,36 @@ end
 
 function ber_checker_top!(bist)
     @unpack cur_blk, pam, bits_per_sym = bist.param
-    @unpack gen_gray_map, chk_precode_prev_sym, chk_start_blk, Si, Si_bits = bist
+    @unpack gen_gray_map, chk_precode_prev_sym, chk_start_blk, Si = bist
 
+    nsym = length(Si)
 
-    if cur_blk >= chk_start_blk #make start blk a parameter later
-        if bist.gen_en_precode
-            bist.chk_precode_prev_sym = Si[end]
-            Si .= mod.([chk_precode_prev_sym; Si[1:end-1]].+ Si , pam)
-        end
-
-        if ~isempty(gen_gray_map)
-            for n in 1:blk_size
-                Si[n] = gen_gray_map[Si[n] + 1]
-            end
-        end
-
-        Si_bits .= vec(stack(int2bits.(Si, bits_per_sym)))
-
-        ber_check_prbs!(bist)
+    if cur_blk < chk_start_blk || nsym == 0
+        empty!(Si)
+        return
     end
+
+    if bist.gen_en_precode
+        bist.chk_precode_prev_sym = Si[end]
+        Si .= mod.([chk_precode_prev_sym; Si[1:end-1]].+ Si , pam)
+    end
+
+    if ~isempty(gen_gray_map)
+        for n in 1:nsym
+            Si[n] = gen_gray_map[Si[n] + 1]
+        end
+    end
+
+    # Resize working vectors to match the actual number of received symbols
+    nbits = bits_per_sym * nsym
+    resize!(bist.Si_bits, nbits)
+    resize!(bist.ref_bits, nbits)
+
+    bist.Si_bits .= vec(stack(int2bits.(Si, bits_per_sym)))
+
+    ber_check_prbs!(bist)
+
+    empty!(Si)
 end
 
 function ber_check_prbs!(bist)
