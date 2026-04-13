@@ -3,12 +3,145 @@ using UnPack, DSP, Random, Interpolations
 include("../util/Util_JLSD.jl"); using .Util_JLSD
 
 export clkgen_pi_itp_top!
-export sample_itp_top!, sample_phi_top!, slicers_top!
+export sample_itp_top!, sample_phi_top!, slicers_top!, sample_filter_top!
 export cdr_top!, adpt_top!
+export eb_write!, eb_can_read_subblk, eb_can_read_times
 
 
-function clkgen_pi_itp_top!(clkgen; pi_code)
-    @unpack tui, osr, cur_subblk, subblk_size = clkgen.param
+# ── Elastic Buffer helpers ───────────────────────────────────────────────────
+
+"""
+    eb_write!(eb, waveform)
+
+Append `waveform` (a block of filtered samples on the TX grid) to the
+elastic buffer, advancing the write frontier `t_tx_max`.
+
+Before writing:
+- Trims `t_tx_min` to `floor(t_rx)` to reclaim samples already consumed by RX.
+- Detects **underflow**: if `t_rx > t_tx_max` the RX cursor has genuinely
+  outrun the TX writer; `eb.underflow_cnt` is incremented.
+
+After writing:
+- Detects **overflow**: if the stored window exceeds `eb.capacity`, the
+  oldest samples are dropped and `eb.overflow_cnt` is incremented.
+"""
+function eb_write!(eb, waveform::AbstractVector{Float64})
+    # Reclaim samples already consumed by RX
+    eb.t_tx_min = max(eb.t_tx_min, floor(Int, eb.t_rx))
+
+    # Genuine underflow: RX cursor has outrun the TX write frontier
+    if eb.t_rx > eb.t_tx_max
+        eb.underflow_cnt += 1
+    end
+
+    n        = length(waveform)
+    capacity = eb.capacity
+    t_start  = eb.t_tx_max
+
+    for i = 0:n-1
+        eb.buf[(t_start + i) % capacity + 1] = waveform[i + 1]
+    end
+    eb.t_tx_max += n
+
+    # Overflow: stored window exceeds capacity, drop oldest samples
+    if eb.t_tx_max - eb.t_tx_min > capacity
+        eb.overflow_cnt += 1
+        eb.t_tx_min = eb.t_tx_max - capacity
+    end
+    return nothing
+end
+
+"""
+    eb_can_read_subblk(eb; margin=1) -> Bool
+
+Nominal readiness check using only `t_rx` and the nominal `osr_rx` spacing,
+without accounting for PI phase offset, skew, or jitter.
+
+Kept for reference and backward-compatible usage, but the scheduling loop
+should prefer `eb_can_read_times(eb, Φi)` which checks against the actual
+generated sampling instants (including `Φ0`, skew, and jitter).
+
+This function has **no side effects** (no counters modified).
+"""
+function eb_can_read_subblk(eb; margin::Int = 1)
+    osr_rx      = eb.param.osr_rx
+    subblk_size = eb.param.subblk_size
+    # Last sample time needed (plus one for the k+1 linear-interpolation term)
+    t_need_max  = eb.t_rx + (subblk_size - 1) * osr_rx + margin
+    # Oldest sample time needed
+    t_need_min  = floor(Int, eb.t_rx)
+
+    return t_need_min >= eb.t_tx_min && t_need_max < eb.t_tx_max
+end
+
+"""
+    eb_can_read_times(eb, Φi) -> Bool
+
+Return `true` when the elastic buffer contains all samples needed to
+interpolate at each of the absolute TX-grid times in `Φi`.
+
+Uses the **actual** generated sampling instants (including PI phase offset
+`Φ0` scaled by `osr_rx`, clock skew, and random jitter) rather than a
+nominal estimate with a fixed margin.
+
+Checks:
+- `floor(minimum(Φi)) >= t_tx_min`:   oldest needed sample is available
+- `floor(maximum(Φi)) + 1 < t_tx_max`: the `k0+1` sample for linear
+  interpolation of the latest instant is available
+
+This function has **no side effects**.
+"""
+function eb_can_read_times(eb, Φi)
+    # Oldest needed sample index (k0 of the earliest instant)
+    t_need_min = floor(Int, minimum(Φi))
+    # Latest needed sample index (k0+1 of the latest instant, for linear interp)
+    t_need_max = floor(Int, maximum(Φi)) + 1
+    return t_need_min >= eb.t_tx_min && t_need_max < eb.t_tx_max
+end
+
+"""
+    eb_interp(eb, t) -> Float64
+
+Linear interpolation of the elastic buffer waveform at float TX-grid time
+`t`.  Caller must ensure `t` is within `[eb.t_tx_min, eb.t_tx_max - 1]`.
+"""
+function eb_interp(eb, t::Float64)
+    k0       = floor(Int, t)
+    frac     = t - k0
+    capacity = eb.capacity
+    v0 = eb.buf[k0       % capacity + 1]
+    v1 = eb.buf[(k0 + 1) % capacity + 1]
+    return muladd(frac, v1 - v0, v0)
+end
+
+# ── RX block functions ────────────────────────────────────────────────────────
+
+
+"""
+    clkgen_pi_itp_top!(clkgen, eb; pi_code)
+
+Generate RX sampling instants for one sub-block in absolute TX-grid
+sample-time units, using the RX cursor `eb.t_rx` as the base position and
+`param.osr_rx` as the inter-symbol spacing.
+
+`pi_ui_cover = 4` means the PI covers 4 **RX-clock** UI units, so the CDR
+phase offset `Φ0` is scaled by `osr_rx` (TX-grid samples per RX UI), not
+the nominal `osr`.  Clock skew (`Φskew`) and random jitter (`Φrj`) remain
+expressed in absolute TX-grid sample units (converted via `osr`, which is
+the TX-grid sample rate).
+
+After returning, `eb.t_rx` is **not** advanced here; the caller (the
+block-iteration loop) is responsible for doing
+    eb.t_rx += subblk_size * osr_rx
+so that cursor management is centralised in one place.
+
+The caller must also check `eb_can_read_times(eb, clkgen.Φo_subblk)` on the
+generated times **before** calling `sample_phi_top!`, and roll back the
+clkgen state (`pi_code_prev`, `pi_wrap_ui`, and `Φo`) if the buffer is not
+yet ready.
+"""
+function clkgen_pi_itp_top!(clkgen, eb; pi_code)
+    @unpack tui, osr, osr_rx, subblk_size = clkgen.param
     @unpack nphases, rj, skews = clkgen
     @unpack pi_code_prev, pi_wrap_ui, pi_wrap_ui_Δcode = clkgen
     @unpack pi_nonlin_lut, pi_ui_cover, pi_codes_per_ui = clkgen
@@ -18,41 +151,74 @@ function clkgen_pi_itp_top!(clkgen; pi_code)
         pi_wrap_ui -= sign(Δpi_code)*pi_ui_cover
     end
 
-    Φ0 = osr*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
-    Φstart = (cur_subblk-1)*subblk_size*osr
-    Φnom = Φstart:osr:Φstart+(subblk_size-1)*osr
+    # CDR phase offset in TX-grid sample units.
+    # pi_ui_cover = 4 is in RX-clock UI units, so scale by osr_rx (TX-grid
+    # samples per RX UI), not by nominal osr.
+    Φ0    = osr_rx*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
+    # Skew and jitter are absolute timing deviations: convert seconds → TX-grid
+    # samples using osr (samples per nominal UI) and tui (nominal UI period).
     Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
-    Φrj = rj/tui*osr*randn(subblk_size)
+    Φrj   = rj/tui*osr*randn(subblk_size)
 
-    @. clkgen.Φo_subblk = Φ0 + Φnom + Φskew + Φrj
+    # Nominal sampling instants in absolute TX-grid time, stepping by osr_rx
+    t_rx = eb.t_rx
+    for j = 0:subblk_size-1
+        clkgen.Φo_subblk[j+1] = Φ0 + t_rx + j*osr_rx + Φskew[j+1] + Φrj[j+1]
+    end
 
     clkgen.pi_code_prev = pi_code
-    clkgen.pi_wrap_ui = pi_wrap_ui
+    clkgen.pi_wrap_ui   = pi_wrap_ui
     append!(clkgen.Φo, clkgen.Φo_subblk)
 
 end
 
 
 
+"""
+    sample_filter_top!(splr, Vi)
+
+Apply the sampler bandwidth-limiting impulse response to the channel
+waveform `Vi`, updating `splr.Vo` in-place (convolution with inter-block
+memory preserved via `splr.Vo_mem`).
+"""
+function sample_filter_top!(splr, Vi)
+    @unpack dt = splr.param
+    @unpack ir, Vo_conv, Vo_mem = splr
+    u_conv!(Vo_conv, Vi, ir, Vi_mem=Vo_mem, gain=dt)
+    return nothing
+end
+
+"""
+    sample_itp_top!(splr, Vi)
+
+Apply RX bandwidth filter and build a block-local interpolation object
+(`splr.itp_Vext`) that can be used by `sample_phi_top!` (backward-
+compatible path, not used when the elastic buffer is active).
+"""
 function sample_itp_top!(splr, Vi)
     @unpack osr,dt, blk_size_osr = splr.param
     @unpack ir, Vo_conv, Vo, Vo_mem = splr
     @unpack prev_nui, V_prev_nui, Vext, tt_Vext = splr
 
-    u_conv!(Vo_conv, Vi, ir, Vi_mem=Vo_mem, gain=dt)
+    sample_filter_top!(splr, Vi)
 
     Vext[eachindex(V_prev_nui)] .= V_prev_nui
     Vext[lastindex(V_prev_nui)+1:end] .= Vo
     splr.itp_Vext = linear_interpolation(tt_Vext, Vext)
 end
 
-function sample_phi_top!(splr, Φi)
-    @unpack cur_subblk, subblk_size = splr.param
-    @unpack itp_Vext = splr
+"""
+    sample_phi_top!(splr, eb, Φi)
 
-    splr.So_subblk .= itp_Vext.(Φi)
+Sample the elastic buffer `eb` at the absolute TX-grid times in `Φi`
+using linear interpolation, storing results in `splr.So_subblk` and
+appending to `splr.So`.
+"""
+function sample_phi_top!(splr, eb, Φi)
+    for j = eachindex(Φi)
+        splr.So_subblk[j] = eb_interp(eb, Φi[j])
+    end
     append!(splr.So, splr.So_subblk)
-
 end
 
 function slicers_top!(slc, Si; ref_code)
