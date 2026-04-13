@@ -120,7 +120,9 @@ function sim_subblk(trx, blk_idx)
 
     param.cur_subblk = blk_idx
 
-    clkgen_pi_itp_top!(clkgen, eb, pi_code=cdr.pi_code)
+    # NOTE: clkgen_pi_itp_top! is called by the caller (sim_blk) BEFORE this
+    # function, and eb_can_read_times has already confirmed readiness.
+    # Φo_subblk is populated and its history is appended there too.
 
     sample_phi_top!(splr, eb, clkgen.Φo_subblk)
 
@@ -157,10 +159,17 @@ function sim_blk(trx, blk_idx)
     sample_filter_top!(splr, ch.Vo)
     eb_write!(eb, splr.Vo)
 
-    # Dynamic sub-block scheduling: run as many RX sub-blocks as the buffer
-    # can support (naturally handles non-integer TX/RX clock relationships).
+    # Dynamic sub-block scheduling: generate candidate Φo_subblk (including
+    # all timing perturbations: Φ0, Φskew, Φrj), then check whether those
+    # exact times are available in the elastic buffer.  The same Φo_subblk is
+    # reused for sampling so that random jitter is not regenerated between the
+    # readiness check and the actual read.
     subblk_count = 0
-    while eb_can_read_subblk(eb)
+    while true
+        clkgen_pi_itp_top!(clkgen, eb, pi_code=cdr.pi_code)
+        eb_can_read_times(eb, clkgen.Φo_subblk) || break
+        # Commit candidate to Φo history only after readiness is confirmed.
+        append!(clkgen.Φo, clkgen.Φo_subblk)
         param.cur_subblk = subblk_count + 1
         sim_subblk(trx, subblk_count + 1)
         eb.t_rx += param.subblk_size * param.osr_rx

@@ -6,11 +6,15 @@ Demonstrates the three key scenarios described in the requirements:
   2. freq_offset_ppm < 0  →  RX clock slower, buffer fills, eventually overflows
   3. freq_offset_ppm == 0 →  balanced, sub-block count matches baseline
 
+Also tests that elastic-buffer readiness (eb_can_read_times) is based on the
+actual upcoming sample times, accounting for PI/CDR phase offset (Φ0), static
+skew (Φskew), and random jitter (Φrj), rather than only nominal spacing.
+
 Run from the repository root with:
     julia test/test_elastic_buffer.jl
 """
 
-using Test
+using Test, Random
 
 # ── Minimal stubs (avoid loading GLMakie / full sim stack) ──────────────────
 
@@ -38,8 +42,8 @@ end
 
 end  # module TrxStub
 
-# Pull in the real EB helpers (eb_write!, eb_can_read_subblk, eb_interp)
-# by re-defining them here against TrxStub so we avoid heavy dependencies.
+# Pull in the real EB helpers by re-defining them here against TrxStub
+# so we avoid heavy dependencies.
 
 function eb_write!(eb, waveform)
     # Reclaim samples already consumed by RX
@@ -74,6 +78,15 @@ function eb_can_read_subblk(eb; margin::Int = 1)
     return t_need_min >= eb.t_tx_min && t_need_max < eb.t_tx_max
 end
 
+# eb_can_read_times: readiness based on actual sample times (includes all
+# timing perturbations: Φ0, Φskew, Φrj).  The k+1 interpolation term is
+# accounted for by the +1 on the max side.
+function eb_can_read_times(eb, Φi)
+    t_need_min = floor(Int, minimum(Φi))
+    t_need_max = floor(Int, maximum(Φi)) + 1
+    return t_need_min >= eb.t_tx_min && t_need_max < eb.t_tx_max
+end
+
 function eb_interp(eb, t::Float64)
     k0       = floor(Int, t)
     frac     = t - k0
@@ -83,7 +96,15 @@ function eb_interp(eb, t::Float64)
     return muladd(frac, v1 - v0, v0)
 end
 
-# Helper: run N TX blocks and return (total_subblks, underflow_cnt, overflow_cnt)
+# Helper: generate nominal candidate Φo_subblk (no jitter/skew perturbation)
+function make_phi_nominal(eb, Φ0_offset = 0.0)
+    osr_rx      = eb.param.osr_rx
+    subblk_size = eb.param.subblk_size
+    return [Φ0_offset + eb.t_rx + j * osr_rx for j in 0:subblk_size-1]
+end
+
+# Helper: run N TX blocks using eb_can_read_times with nominal Φo_subblk,
+# and return (total_subblks, underflow_cnt, overflow_cnt)
 function run_sim(ppm::Float64, nblks::Int)
     param = TrxStub.Param(freq_offset_ppm = ppm)
     eb    = TrxStub.ElasticBuffer(param = param)
@@ -93,8 +114,10 @@ function run_sim(ppm::Float64, nblks::Int)
         # Simulate a TX block: write blk_size_osr unit-valued samples
         eb_write!(eb, ones(Float64, param.blk_size_osr))
 
-        # Dynamic sub-block scheduling
-        while eb_can_read_subblk(eb)
+        # Dynamic sub-block scheduling using actual candidate times
+        while true
+            Φo = make_phi_nominal(eb)
+            eb_can_read_times(eb, Φo) || break
             total_subblks += 1
             eb.t_rx += param.subblk_size * param.osr_rx
         end
@@ -166,6 +189,113 @@ end
     for t in [0.0, 1.5, 100.7, Float64(param.blk_size_osr - 2)]
         @test eb_interp(eb, t) ≈ t  atol=1e-12
     end
+end
+
+# ── Tests for eb_can_read_times: actual-time-based readiness ─────────────────
+
+@testset "eb_can_read_times – nominal matches eb_can_read_subblk" begin
+    # With zero phase offset and zero jitter/skew, eb_can_read_times using
+    # make_phi_nominal should agree with eb_can_read_subblk at all t_rx.
+    param = TrxStub.Param()
+    eb    = TrxStub.ElasticBuffer(param = param)
+    eb_write!(eb, ones(Float64, param.blk_size_osr))
+
+    while eb_can_read_subblk(eb)
+        Φo = make_phi_nominal(eb)
+        @test eb_can_read_times(eb, Φo) == true
+        eb.t_rx += param.subblk_size * param.osr_rx
+    end
+    # Once nominal check says no more, actual-time check should also say no.
+    Φo = make_phi_nominal(eb)
+    @test eb_can_read_times(eb, Φo) == false
+end
+
+@testset "eb_can_read_times – large positive Φ0 (late phase offset)" begin
+    # A large positive PI phase offset shifts sample times later.
+    # If the offset is big enough, those samples are not yet in the buffer
+    # even though the nominal cursor t_rx would be in range.
+    param = TrxStub.Param()
+    eb    = TrxStub.ElasticBuffer(param = param)
+
+    # Write exactly one TX block worth of samples.
+    eb_write!(eb, ones(Float64, param.blk_size_osr))
+
+    # Nominal check says the first sub-block is readable.
+    @test eb_can_read_subblk(eb) == true
+
+    # But with Φ0 = blk_size_osr (shift one whole block ahead), the last
+    # sample would be at index blk_size_osr + (subblk_size-1)*osr_rx + 1,
+    # which exceeds t_tx_max — buffer is NOT ready for those actual times.
+    big_Φ0 = Float64(param.blk_size_osr)
+    Φo_late = make_phi_nominal(eb, big_Φ0)
+    @test eb_can_read_times(eb, Φo_late) == false
+end
+
+@testset "eb_can_read_times – large negative Φ0 (early phase offset)" begin
+    # A large negative PI phase offset shifts all sample times earlier.
+    # If the shift goes before t_tx_min, the buffer is not ready even though
+    # the nominal cursor is in range.
+    param = TrxStub.Param()
+    eb    = TrxStub.ElasticBuffer(param = param)
+
+    # Write one TX block and advance RX cursor to nearly the end.
+    eb_write!(eb, ones(Float64, param.blk_size_osr))
+    # Move t_rx close to the end so nominal sub-block fits.
+    n_nominal = floor(Int, param.blk_size_osr / (param.subblk_size * param.osr_rx))
+    for _ in 1:n_nominal-1
+        eb.t_rx += param.subblk_size * param.osr_rx
+    end
+    @test eb_can_read_subblk(eb) == true   # nominal says readable
+
+    # Shift all sample times back before t_tx_min with a large negative Φ0.
+    big_neg_Φ0 = -(eb.t_rx + 1.0)
+    Φo_early = make_phi_nominal(eb, big_neg_Φ0)
+    @test minimum(Φo_early) < eb.t_tx_min
+    @test eb_can_read_times(eb, Φo_early) == false
+end
+
+@testset "eb_can_read_times – jitter can push max sample past t_tx_max" begin
+    # Simulate one sub-block of candidate times where random jitter on the
+    # last sample pushes it past t_tx_max, making the buffer not ready.
+    param = TrxStub.Param()
+    eb    = TrxStub.ElasticBuffer(param = param)
+    eb_write!(eb, ones(Float64, param.blk_size_osr))
+
+    # Place t_rx so the nominal last sample is one step before t_tx_max.
+    subblk_size = param.subblk_size
+    osr_rx      = param.osr_rx
+    eb.t_rx = Float64(eb.t_tx_max) - (subblk_size - 1) * osr_rx - 2.0
+
+    Φo_no_jitter = make_phi_nominal(eb)
+    @test eb_can_read_times(eb, Φo_no_jitter) == true  # just fits
+
+    # Add a large positive jitter only to the last sample.
+    Φo_with_jitter = copy(Φo_no_jitter)
+    Φo_with_jitter[end] += 3.0    # push last sample past t_tx_max
+    @test eb_can_read_times(eb, Φo_with_jitter) == false
+end
+
+@testset "eb_can_read_times – jitter/skew within buffer is always readable" begin
+    # When the buffer has plenty of headroom on both ends, reasonable jitter/skew
+    # should keep all sample times within [t_tx_min, t_tx_max).
+    param = TrxStub.Param()
+    eb    = TrxStub.ElasticBuffer(param = param)
+    # Write 2 TX blocks to give ample write headroom.
+    eb_write!(eb, ones(Float64, param.blk_size_osr))
+    eb_write!(eb, ones(Float64, param.blk_size_osr))
+
+    osr_rx      = param.osr_rx
+    subblk_size = param.subblk_size
+    # Start t_rx in the middle of the buffer so jitter has room on both ends.
+    eb.t_rx = Float64(param.blk_size_osr)
+
+    # Jitter of ±0.5 samples — well within the buffer on both sides.
+    Random.seed!(42)
+    jitter = 0.5 * (2 .* rand(subblk_size) .- 1)
+    Φo_jittered = make_phi_nominal(eb) .+ jitter
+    @test minimum(Φo_jittered) >= eb.t_tx_min
+    @test floor(Int, maximum(Φo_jittered)) + 1 < eb.t_tx_max
+    @test eb_can_read_times(eb, Φo_jittered) == true
 end
 
 println("All ElasticBuffer tests passed.")

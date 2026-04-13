@@ -180,7 +180,10 @@ function step_sim_blk(trx)
     eb_write!(eb, splr.Vo)
 
     subblk_count = 0
-    while eb_can_read_subblk(eb)
+    while true
+        clkgen_pi_itp_top!(clkgen, eb, pi_code=trx.cdr.pi_code)
+        eb_can_read_times(eb, trx.clkgen.Φo_subblk) || break
+        append!(trx.clkgen.Φo, trx.clkgen.Φo_subblk)
         param.cur_subblk = subblk_count + 1
         step_sim_subblk(trx, subblk_count + 1)
         eb.t_rx += param.subblk_size * param.osr_rx
@@ -195,7 +198,9 @@ function step_sim_subblk(trx, blk_idx)
 
     trx.param.cur_subblk = blk_idx
 
-    clkgen_pi_itp_top!(clkgen, eb, pi_code=cdr.pi_code)
+    # NOTE: clkgen_pi_itp_top! is called by the caller (step_sim_blk) BEFORE
+    # this function, and eb_can_read_times has already confirmed readiness.
+    # Φo_subblk is already populated.
 
     sample_phi_top!(splr, eb, clkgen.Φo_subblk)
 
