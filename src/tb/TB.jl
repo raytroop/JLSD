@@ -168,6 +168,7 @@ function sim_blk(trx, blk_idx)
     # Margin must cover the maximum CDR phase offset (Φ0) that clkgen_pi_itp_top!
     # can add to the nominal sampling positions: up to pi_ui_cover UI converted
     # to TX-grid samples, plus 1 for the linear-interpolation k+1 term.
+    # With pi_ui_cover=4 and osr=24 this evaluates to 4*24+1 = 97.
     cdr_margin = Int(ceil(clkgen.pi_ui_cover * param.osr)) + 1
     subblk_count = 0
     while eb_can_read_subblk(eb, margin=cdr_margin)
