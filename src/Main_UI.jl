@@ -83,6 +83,9 @@ adpt = TrxStruct.Adpt(
     Neslc_per_phi = eslc.N_per_phi,
     mu_eslc = 1/64)
 
+# Elastic buffer for frequency-offset modelling
+eb = TrxStruct.ElasticBuffer(param = param)
+
 #waveform plotting param
 wvfm = TrxStruct.Wvfm(
     param = param,
@@ -96,7 +99,7 @@ wvfm.eye1.y_npts[] = 256
 
 println("init done")
 
-trx =  (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+trx =  (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, eb, wvfm)
 
 
 @time make_widget(trx);

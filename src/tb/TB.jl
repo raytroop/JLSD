@@ -18,7 +18,8 @@ function init_trx()
                 osr = 24,
                 blk_size = 2^10,
                 subblk_size = 32,
-                nsym_total = Int(1e6))
+                nsym_total = Int(1e6),
+                freq_offset_ppm = 100.0)
     Random.seed!(param.rand_seed)
 
     #bist param
@@ -102,22 +103,26 @@ function init_trx()
     cm_turbo.colors[1] = RGB(1.0,1.0,1.0)
     wvfm.eye1.colormap = cm_turbo
 
+    # Elastic buffer: decouples TX block production from RX sub-block
+    # consumption to support non-integer TX/RX clock relationships.
+    eb = TrxStruct.ElasticBuffer(param = param)
+
     init_plot(wvfm)
 
     println("init done")
 
-    return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+    return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, eb, wvfm)
 end
 
 function sim_subblk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx
+    @unpack param, bist, drv, ch, clkgen, splr, eb = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_subblk = blk_idx
 
-    clkgen_pi_itp_top!(clkgen, pi_code=cdr.pi_code)
+    clkgen_pi_itp_top!(clkgen, eb, pi_code=cdr.pi_code)
 
-    sample_phi_top!(splr, clkgen.Φo_subblk)
+    sample_phi_top!(splr, eb, clkgen.Φo_subblk)
 
     slicers_top!(dslc, splr.So_subblk, ref_code=[[128],[128],[128],[128]])
     slicers_top!(eslc, splr.So_subblk, ref_code=adpt.eslc_ref_vec)
@@ -133,7 +138,7 @@ function sim_subblk(trx, blk_idx)
 end
 
 function sim_blk(trx, blk_idx)
-    @unpack param, bist, drv, ch, clkgen, splr = trx
+    @unpack param, bist, drv, ch, clkgen, splr, eb = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
     param.cur_blk = blk_idx
@@ -146,10 +151,21 @@ function sim_blk(trx, blk_idx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    # Apply RX bandwidth filter, then write the filtered block to the
+    # elastic buffer.  This replaces the single-block itp_Vext approach and
+    # enables dynamic sub-block scheduling when freq_offset_ppm != 0.
+    sample_filter_top!(splr, ch.Vo)
+    eb_write!(eb, splr.Vo)
 
-
-    run_blk_iter(trx, 0, param.nsubblk, sim_subblk)
+    # Dynamic sub-block scheduling: run as many RX sub-blocks as the buffer
+    # can support (naturally handles non-integer TX/RX clock relationships).
+    subblk_count = 0
+    while eb_can_read_subblk(eb)
+        param.cur_subblk = subblk_count + 1
+        sim_subblk(trx, subblk_count + 1)
+        eb.t_rx += param.subblk_size * param.osr_rx
+        subblk_count += 1
+    end
 
     ber_checker_top!(bist)
 

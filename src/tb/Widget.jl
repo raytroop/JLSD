@@ -80,6 +80,7 @@ function make_widget(trx)
         (label = "RX CDR Ki", range= [32; 20:-1:8], format = "1/2^{:d}", startvalue = round(Int,-log2(cdr.ki))),
         (label = "RX IQ skew", range= -3:0.1:3, format = "{:.1f} ps", startvalue = clkgen.skews[2]/1e-12),
         (label = "RX RJ", range= 0:0.1:2, format = "{:.1f} ps", startvalue = clkgen.rj/1e-12),
+        (label = "RX freq offset", range= -500:10:500, format = "{:d} ppm", startvalue = round(Int, param.freq_offset_ppm)),
         tellheight=false, value_column_width=100)
 
 
@@ -122,7 +123,8 @@ function make_widget(trx)
         cdr.ki = 1.0/2^slvals[2]
         clkgen.skews[[2,4]] .= slvals[3]*1e-12
         clkgen.rj = slvals[4]*1e-12
-
+        param.freq_offset_ppm = Float64(slvals[5])
+        param.osr_rx = param.osr / (1 + param.freq_offset_ppm * 1e-6)
     end
 
 
@@ -165,7 +167,7 @@ end
 
 
 function step_sim_blk(trx)
-    @unpack param, bist, drv, ch = trx
+    @unpack param, bist, drv, ch, splr, eb = trx
 
     pam_gen_top!(bist)
 
@@ -173,22 +175,29 @@ function step_sim_blk(trx)
 
     ch_top!(ch, drv.Vo)
 
-    sample_itp_top!(splr, ch.Vo)
+    # Apply RX filter and write to elastic buffer (dynamic scheduling)
+    sample_filter_top!(splr, ch.Vo)
+    eb_write!(eb, splr.Vo)
 
-    run_blk_iter(trx, 0, param.nsubblk, step_sim_subblk)
-
+    subblk_count = 0
+    while eb_can_read_subblk(eb)
+        param.cur_subblk = subblk_count + 1
+        step_sim_subblk(trx, subblk_count + 1)
+        eb.t_rx += param.subblk_size * param.osr_rx
+        subblk_count += 1
+    end
 
 end
 
 function step_sim_subblk(trx, blk_idx)
-    @unpack clkgen, splr = trx
+    @unpack clkgen, splr, eb = trx
     @unpack dslc, eslc, cdr, adpt = trx
 
     trx.param.cur_subblk = blk_idx
 
-    clkgen_pi_itp_top!(clkgen, pi_code=cdr.pi_code)
+    clkgen_pi_itp_top!(clkgen, eb, pi_code=cdr.pi_code)
 
-    sample_phi_top!(splr, clkgen.Φo_subblk)
+    sample_phi_top!(splr, eb, clkgen.Φo_subblk)
 
     slicers_top!(dslc, splr.So_subblk, ref_code=[[128],[128],[128],[128]])
     slicers_top!(eslc, splr.So_subblk, ref_code=adpt.eslc_ref_vec)
