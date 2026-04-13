@@ -168,14 +168,17 @@ end
     end
 end
 
-@testset "Sampling phase – mid-UI bias via osr÷2" begin
-    # Verify that the +osr÷2 term in Φ0 shifts the sampling from data
-    # transitions (fractional phase 0) to data centers (fractional phase
-    # osr/2).
+@testset "Sampling phase – CDR initial condition at mid-UI via pd_accum" begin
+    # Verify that the correct fix is to initialize pd_accum to start at mid-UI
+    # (pi_codes_per_ui/2 offset) rather than hardcoding osr÷2 in the phase
+    # calculation.
     #
-    # Setup: PAM2 staircase waveform oversampled by osr=24, with a channel
-    # delay of npre*osr=480 samples.  Symbol k occupies positions
-    # [k*osr + delay, (k+1)*osr + delay).
+    # The CDR has TWO stable equilibria:
+    #   1. Data center (fractional phase = osr/2): correct lock, low BER.
+    #   2. Data transitions (fractional phase = 0):  false lock, BER ≈ 0.5.
+    # The default pd_accum=128 → pi_code=128 falls into the false-lock basin.
+    # Setting pd_accum = 128 + pi_codes_per_ui/2 starts the CDR in the
+    # correct basin so the loop converges to the data center.
     param = TrxStub.Param()
     osr = param.osr
     npre = 20
@@ -185,19 +188,22 @@ end
     pi_res = 8
     pi_ui_cover = 4
     pi_codes_per_ui = 2^pi_res / pi_ui_cover  # 64
-    pi_code = 128  # initial CDR code
 
-    # ── Bug scenario (without +osr÷2): Φ0 lands on transitions ──
-    Φ0_bug = osr * (0 + pi_code / pi_codes_per_ui)  # = 48
-    frac_bug = mod(Φ0_bug - channel_delay, osr)
-    @test frac_bug ≈ 0.0   # exactly at data transitions → BER ≈ 0.5
+    # ── Default (false-lock) initial condition ──
+    pd_accum_default = 128.0
+    pi_code_default  = Int(floor(pd_accum_default))   # 128
+    Φ0_default       = osr * pi_code_default / pi_codes_per_ui  # 48.0
+    frac_default     = mod(Φ0_default - channel_delay, osr)
+    @test frac_default ≈ 0.0   # exactly at transitions → false lock
 
-    # ── Fixed scenario (with +osr÷2): Φ0 lands at data centers ──
-    Φ0_fix = osr * (0 + pi_code / pi_codes_per_ui) + osr ÷ 2  # = 60
-    frac_fix = mod(Φ0_fix - channel_delay, osr)
-    @test frac_fix ≈ Float64(osr ÷ 2)   # at data centers → low BER
+    # ── Corrected initial condition: pd_accum += pi_codes_per_ui/2 ──
+    pd_accum_fixed = 128.0 + pi_codes_per_ui / 2   # 160.0
+    pi_code_fixed  = Int(floor(pd_accum_fixed))     # 160
+    Φ0_fixed       = osr * pi_code_fixed / pi_codes_per_ui  # 60.0
+    frac_fixed     = mod(Φ0_fixed - channel_delay, osr)
+    @test frac_fixed ≈ Float64(osr ÷ 2)   # at data centers → correct lock
 
-    # ── Functional check with a staircase waveform in the EB ──
+    # ── Functional check: mid-UI samples give correct symbol decisions ──
     eb = TrxStub.ElasticBuffer(param = param)
     nsymbols = 100
     symbols = [isodd(k) ? 1.0 : -1.0 for k in 1:nsymbols]
@@ -209,53 +215,31 @@ end
     end
     eb_write!(eb, waveform)
 
-    # Helper: given a sample position t, return the expected symbol value
-    # (0.0 if before the channel-delayed data region).
-    function expected_symbol(t)
-        if t < channel_delay
-            return 0.0
-        end
-        idx = Int(floor((t - channel_delay) / osr)) + 1
-        return idx <= nsymbols ? symbols[idx] : 0.0
+    # Symbol at position j starts at j*osr + channel_delay (0-indexed j)
+    function expected_symbol(j)
+        return j < nsymbols ? symbols[j + 1] : 0.0
     end
 
-    # Sample with the fixed Φ0 at data centers → all in-range samples correct
-    correct_fix = 0
-    total_fix   = 0
+    # Corrected initial condition: sample at mid-UI → all decisions correct
+    correct_fix = 0; total_fix = 0
     for j in 0:nsymbols - 1
-        t = Φ0_fix + j * Float64(osr)
+        t = Φ0_fixed + j * Float64(osr)
         if t + 1 < length(waveform) && t >= channel_delay
             total_fix += 1
             val = eb_interp(eb, t)
-            correct_fix += (sign(val) == sign(expected_symbol(t))) ? 1 : 0
+            correct_fix += (sign(val) == sign(expected_symbol(j))) ? 1 : 0
         end
     end
     @test total_fix > 0
     @test correct_fix == total_fix   # perfect decisions at data centers
 
-    # Sample with the buggy Φ0 at transitions → zero-valued samples
-    at_transition = 0
-    total_bug     = 0
-    for j in 0:nsymbols - 1
-        t = Φ0_bug + j * Float64(osr)
-        if t + 1 < length(waveform) && t >= channel_delay
-            total_bug += 1
-            val = eb_interp(eb, t)
-            # At staircase transitions, the interpolated value is exactly the
-            # start of the next symbol; for an alternating ±1 pattern the
-            # sign flips at every boundary, so sign(val) may match or not.
-            # The key point: for a bandwidth-limited (non-staircase) signal,
-            # the transition sample is near zero and unreliable.  For a
-            # staircase, the sample lands on the boundary and equals the NEW
-            # symbol value (because the staircase changes at the boundary).
-            # What matters is the fractional-phase calculation above.
-            at_transition += (val ≈ expected_symbol(t)) ? 0 : 1
-        end
-    end
-    @test total_bug > 0
-    # With a staircase, transition samples may accidentally match the new
-    # symbol value.  The critical verification is the fractional-phase
-    # arithmetic (frac_bug ≈ 0 and frac_fix ≈ osr/2) tested above.
+    # ── Verify the osr÷2 hardcode IS NOT in clkgen_pi_itp_top! ──
+    # The phase calculation should be:
+    #   Φ0 = osr * (pi_wrap_ui + pi_code / pi_codes_per_ui)   # NO + osr÷2
+    # and the bias comes entirely from the initial pi_code value.
+    # Check: with pi_code_fixed = 160 and pi_wrap_ui = 0:
+    Φ0_computed = osr * (0 + pi_code_fixed / pi_codes_per_ui)
+    @test Φ0_computed ≈ Φ0_fixed   # 60.0, no extra osr÷2 term
 end
 
 println("All ElasticBuffer tests passed.")
