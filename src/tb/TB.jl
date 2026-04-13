@@ -83,13 +83,7 @@ function init_trx()
                 Neslc_per_phi = eslc.N_per_phi,
                 kp = 1/2^6,
                 ki = 1/2^14,
-                pi_res = clkgen.pi_res,
-                # Start at mid-UI so the CDR locks into the data-center
-                # equilibrium rather than the false-lock at data transitions.
-                # pi_code = pi_codes_per_ui/2 mod pi_codes_per_ui gives
-                # fractional phase = 0.5 UI, which is mid-UI regardless of
-                # the channel delay (as long as it is an integer number of UI).
-                pd_accum = 128.0 + clkgen.pi_codes_per_ui / 2)
+                pi_res = clkgen.pi_res)
 
     adpt = TrxStruct.Adpt(
                 param = param,
@@ -165,13 +159,8 @@ function sim_blk(trx, blk_idx)
 
     # Dynamic sub-block scheduling: run as many RX sub-blocks as the buffer
     # can support (naturally handles non-integer TX/RX clock relationships).
-    # Margin must cover the maximum CDR phase offset (Φ0) that clkgen_pi_itp_top!
-    # can add to the nominal sampling positions: up to pi_ui_cover UI converted
-    # to TX-grid samples, plus 1 for the linear-interpolation k+1 term.
-    # With pi_ui_cover=4 and osr=24 this evaluates to 4*24+1 = 97.
-    cdr_margin = Int(ceil(clkgen.pi_ui_cover * param.osr)) + 1
     subblk_count = 0
-    while eb_can_read_subblk(eb, margin=cdr_margin)
+    while eb_can_read_subblk(eb)
         param.cur_subblk = subblk_count + 1
         sim_subblk(trx, subblk_count + 1)
         eb.t_rx += param.subblk_size * param.osr_rx

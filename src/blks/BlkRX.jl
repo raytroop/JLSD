@@ -117,11 +117,7 @@ function clkgen_pi_itp_top!(clkgen, eb; pi_code)
         pi_wrap_ui -= sign(Δpi_code)*pi_ui_cover
     end
 
-    # CDR phase offset in TX-grid sample units (uses integer osr for PI scale).
-    # NOTE: No constant half-UI bias here — the initial mid-UI phase comes
-    # entirely from the initial pd_accum value set in the testbench
-    # (pd_accum = 128 + pi_codes_per_ui/2), so the PI-CDR loop controls
-    # the sampling phase rather than a hardcoded additive term.
+    # CDR phase offset in TX-grid sample units (uses integer osr for PI scale)
     Φ0    = osr*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
     Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
     Φrj   = rj/tui*osr*randn(subblk_size)
