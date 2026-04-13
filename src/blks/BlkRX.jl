@@ -5,7 +5,7 @@ include("../util/Util_JLSD.jl"); using .Util_JLSD
 export clkgen_pi_itp_top!
 export sample_itp_top!, sample_phi_top!, slicers_top!, sample_filter_top!
 export cdr_top!, adpt_top!
-export eb_write!, eb_can_read_subblk
+export eb_write!, eb_can_read_subblk, eb_can_read_times
 
 
 # ── Elastic Buffer helpers ───────────────────────────────────────────────────
@@ -76,6 +76,27 @@ function eb_can_read_subblk(eb; margin::Int = 1)
 end
 
 """
+    eb_can_read_times(eb, Φi) -> Bool
+
+Return `true` when the elastic buffer contains enough data to support linear
+interpolation at all times in `Φi`.
+
+Unlike `eb_can_read_subblk`, this function uses the **actual upcoming sample
+times** (including PI/CDR phase offset Φ0, static skew Φskew, and random
+jitter Φrj) rather than only nominal RX cursor + spacing.  The check is:
+
+- `floor(minimum(Φi)) >= t_tx_min`:   oldest needed sample is available
+- `floor(maximum(Φi)) + 1 < t_tx_max`: the k+1 term for interpolation is present
+
+This function has **no side effects**.
+"""
+function eb_can_read_times(eb, Φi)
+    t_need_min = floor(Int, minimum(Φi))
+    t_need_max = floor(Int, maximum(Φi)) + 1
+    return t_need_min >= eb.t_tx_min && t_need_max < eb.t_tx_max
+end
+
+"""
     eb_interp(eb, t) -> Float64
 
 Linear interpolation of the elastic buffer waveform at float TX-grid time
@@ -100,11 +121,21 @@ Generate RX sampling instants for one sub-block in absolute TX-grid
 sample-time units, using the RX cursor `eb.t_rx` as the base position and
 `param.osr_rx` as the inter-symbol spacing.
 
-The CDR phase offset `Φ0` (derived from `pi_code`) is applied on top of
-the nominal positions.  After returning, `eb.t_rx` is **not** advanced
-here; the caller (the block-iteration loop) is responsible for doing
+`pi_ui_cover = 4` means the PI covers 4 **RX-clock** UI units, so the CDR
+phase offset `Φ0` is scaled by `osr_rx` (TX-grid samples per RX UI), not
+the nominal `osr`.  Clock skew (`Φskew`) and random jitter (`Φrj`) remain
+expressed in absolute TX-grid sample units (converted via `osr`, which is
+the TX-grid sample rate).
+
+After returning, `eb.t_rx` is **not** advanced here; the caller (the
+block-iteration loop) is responsible for doing
     eb.t_rx += subblk_size * osr_rx
 so that cursor management is centralised in one place.
+
+The caller must also check `eb_can_read_times(eb, clkgen.Φo_subblk)` on the
+generated times **before** sampling, and append to `clkgen.Φo` only after
+readiness is confirmed, so that `Φo` history contains only committed
+sub-blocks.
 """
 function clkgen_pi_itp_top!(clkgen, eb; pi_code)
     @unpack tui, osr, osr_rx, subblk_size = clkgen.param
@@ -117,8 +148,12 @@ function clkgen_pi_itp_top!(clkgen, eb; pi_code)
         pi_wrap_ui -= sign(Δpi_code)*pi_ui_cover
     end
 
-    # CDR phase offset in TX-grid sample units (uses integer osr for PI scale)
-    Φ0    = osr*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
+    # CDR phase offset in TX-grid sample units.
+    # pi_ui_cover = 4 is in RX-clock UI units, so scale by osr_rx (TX-grid
+    # samples per RX UI), not by nominal osr.
+    Φ0    = osr_rx*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
+    # Skew and jitter are absolute timing deviations: convert seconds → TX-grid
+    # samples using osr (samples per nominal UI) and tui (nominal UI period).
     Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
     Φrj   = rj/tui*osr*randn(subblk_size)
 
@@ -130,7 +165,9 @@ function clkgen_pi_itp_top!(clkgen, eb; pi_code)
 
     clkgen.pi_code_prev = pi_code
     clkgen.pi_wrap_ui   = pi_wrap_ui
-    append!(clkgen.Φo, clkgen.Φo_subblk)
+    # NOTE: append!(clkgen.Φo, ...) is intentionally NOT done here.
+    # The caller must append to Φo only after eb_can_read_times confirms the
+    # buffer is ready, so that Φo history contains only committed sub-blocks.
 
 end
 
