@@ -96,7 +96,10 @@ wvfm.eye1.y_npts[] = 256
 
 println("init done")
 
-trx =  (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, wvfm)
+# Elastic buffer for TX↔RX frequency-offset modelling.
+eb = TrxStruct.ElasticBuffer(param = param)
+
+trx =  (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, eb, wvfm)
 
 
 @time make_widget(trx);
