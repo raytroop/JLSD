@@ -3,7 +3,7 @@ using Parameters, DataStructures, DSP, FFTW
 using GLMakie, Makie, ColorSchemes
 
 
-export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm
+export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm, ElasticBuffer
 
 
 const PRBS7 = [6, 7]
@@ -34,6 +34,17 @@ const PRBS31 = [28,31]
 
     const rand_seed = 300
 
+    # Frequency offset between TX and RX clocks, in ppm.
+    # Sign convention: freq_offset_ppm > 0 means the RX clock is *faster*
+    # than the TX clock:
+    #   f_rx = f_tx * (1 + freq_offset_ppm * 1e-6)
+    # Therefore the spacing of one RX UI on the TX simulation grid is:
+    #   osr_rx = osr / (1 + freq_offset_ppm * 1e-6)
+    # (RX faster ⇒ each RX UI consumes fewer TX-grid samples.)
+    # Both are mutable so the Widget UI slider can update them at runtime.
+    freq_offset_ppm::Float64 = 0.0
+    osr_rx::Float64 = osr / (1 + freq_offset_ppm * 1e-6)
+
     cur_blk = 0
     cur_subblk = 0
 
@@ -62,7 +73,7 @@ end
 
     So_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
     So::Vector = zeros(param.blk_size)
-    Si = CircularBuffer{UInt8}(param.blk_size)
+    Si::Vector{UInt8} = UInt8[]
     Si_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
 
 end
@@ -338,6 +349,45 @@ end
 end
 
 
+"""
+    ElasticBuffer
+
+Ring buffer that decouples TX waveform production from RX sub-block
+consumption so that a non-zero TX↔RX frequency offset can be modelled.
+
+The buffer stores the RX-filtered waveform on the **TX simulation grid**
+(one slot per `param.dt`).  TX writes extend `t_tx_max`; RX reads at
+floating-point times near `t_rx` (advanced by `osr_rx` per RX symbol)
+using linear interpolation.
+
+Sign convention follows `Param.freq_offset_ppm`:
+  * `freq_offset_ppm > 0`  ⇒ RX faster, `t_rx` advances faster than
+    `t_tx_max` — buffer drains, eventually `underflow_cnt` increases.
+  * `freq_offset_ppm < 0`  ⇒ RX slower, buffer fills — eventually
+    `overflow_cnt` increases (oldest samples are dropped).
+
+Tracked frontiers (all in TX-grid sample-index units):
+  * `t_tx_min` — oldest sample index still available (inclusive)
+  * `t_tx_max` — exclusive write frontier (total samples written so far)
+  * `t_rx`     — RX read cursor (`Float64`, persists across blocks)
+
+Ring indexing is uniformly `buf[(t % capacity) + 1]` (1-based Julia).
+"""
+@kwdef mutable struct ElasticBuffer
+    const param::Param
+    # Capacity in TX-grid samples (default ≈ 4 TX blocks of headroom)
+    const capacity::Int = 4 * param.blk_size_osr
+    # Circular storage
+    buf::Vector{Float64} = zeros(capacity)
+    # Time frontiers (logical, monotonically increasing — *not* mod capacity)
+    t_tx_min::Int = 0
+    t_tx_max::Int = 0
+    # RX read cursor on the TX grid; persists across blocks for continuity
+    t_rx::Float64 = 0.0
+    # Event counters
+    overflow_cnt::Int  = 0
+    underflow_cnt::Int = 0
+end
 
 
 end
