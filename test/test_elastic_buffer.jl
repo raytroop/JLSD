@@ -87,10 +87,10 @@ end
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-function make_phi_nominal(eb, Φ0_offset::Float64 = 0.0)
+function make_phi_nominal(eb, Φ0::Float64 = 0.0)
     osr_rx      = eb.param.osr_rx
     subblk_size = eb.param.subblk_size
-    return [Φ0_offset + eb.t_rx + j * osr_rx for j in 0:subblk_size-1]
+    return [Φ0 + eb.t_rx + j * osr_rx for j in 0:subblk_size-1]
 end
 
 function run_sim(ppm::Float64, nblks::Int)
@@ -279,8 +279,8 @@ end
     eb.t_rx   += (n_nominal - 1) * param.subblk_size * param.osr_rx
     @test eb_can_read_times(eb, make_phi_nominal(eb)) == true
 
-    big_neg_Φ0 = -(eb.t_rx + 1.0)
-    Φo_early   = make_phi_nominal(eb, big_neg_Φ0)
+    neg_Φ0_past_min = -(eb.t_rx + 1.0)
+    Φo_early        = make_phi_nominal(eb, neg_Φ0_past_min)
     @test minimum(Φo_early) < eb.t_tx_min
     @test eb_can_read_times(eb, Φo_early) == false
 end

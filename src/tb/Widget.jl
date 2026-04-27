@@ -192,11 +192,11 @@ function step_sim_blk(trx)
     end
 end
 
-function step_sim_subblk(trx, blk_idx)
+function step_sim_subblk(trx, subblk_idx)
     @unpack clkgen, splr, eb = trx
     @unpack dslc, eslc, cdr, adpt = trx
 
-    trx.param.cur_subblk = blk_idx
+    trx.param.cur_subblk = subblk_idx
 
     # NOTE: caller has already generated Φo_subblk and confirmed readiness.
 

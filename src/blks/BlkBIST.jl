@@ -43,7 +43,7 @@ function pam_gen_top!(bist)
     end
 
     #gray encoding
-    if ~isempty(gen_gray_map)
+    if !isempty(gen_gray_map)
         for n in 1:blk_size
             So[n] = gen_gray_map[So[n] + 1]
         end

@@ -118,11 +118,11 @@ function init_trx()
     return (;param, bist, drv, ch, clkgen, splr, dslc, eslc, cdr, adpt, eb, wvfm)
 end
 
-function sim_subblk(trx, blk_idx)
+function sim_subblk(trx, subblk_idx)
     @unpack param, bist, drv, ch, clkgen, splr, eb = trx
     @unpack dslc, eslc, cdr, adpt, wvfm = trx
 
-    param.cur_subblk = blk_idx
+    param.cur_subblk = subblk_idx
 
     # NOTE: caller has already generated Φo_subblk and confirmed readiness.
 
@@ -191,5 +191,4 @@ function sim_blk(trx, blk_idx)
     wvfm.eye1.x_ofst = 0#round(-(cdr.pi_code/clkgen.pi_codes_per_ui)*wvfm.eye1.x_npts_ui[]+wvfm.eye1.x_npts[]/2)
     w_plot_test(wvfm, cond=(param.cur_blk%wvfm.plot_every_nblk==0))
 end
-
 
