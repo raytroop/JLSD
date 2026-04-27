@@ -81,6 +81,7 @@ function ber_checker_top!(bist)
     end
 
     if ~isempty(gen_gray_map)
+        # Broadcasted getindex applies the lookup table to the variable-length block.
         Si .= getindex.(Ref(gen_gray_map), Si .+ 1)
     end
 

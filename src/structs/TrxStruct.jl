@@ -73,6 +73,8 @@ end
 
     So_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
     So::Vector = zeros(param.blk_size)
+    # Elastic-buffer scheduling can deliver a variable number of RX symbols
+    # per TX block, so keep the block's received symbols in a resizable vector.
     Si::Vector{UInt8} = UInt8[]
     Si_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
 

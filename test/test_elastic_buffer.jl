@@ -124,9 +124,9 @@ end
 end
 
 @testset "ElasticBuffer — positive ppm (RX faster) eventually underflows" begin
-    ppm   = 100.0
+    freq_offset_ppm = 100.0
     nblks = 20_000
-    total, uf, of = run_sim(ppm, nblks)
+    total, uf, of = run_sim(freq_offset_ppm, nblks)
 
     baseline = nblks * (1024 ÷ 32)
     @test total > baseline
@@ -141,9 +141,9 @@ end
     # 32*768.77 ≈ 24600.7 samples — slightly more than one TX block
     # (24576 samples).  Greedy scheduler therefore commits 31 sub-blocks
     # in some blocks and 32 in others, so total < nblks*32.
-    ppm   = -1_000.0
+    freq_offset_ppm = -1_000.0
     nblks = 200
-    total, uf, of = run_sim(ppm, nblks)
+    total, uf, of = run_sim(freq_offset_ppm, nblks)
 
     baseline = nblks * (1024 ÷ 32)
     @test total < baseline

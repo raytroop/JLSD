@@ -123,10 +123,7 @@ function make_widget(trx)
         cdr.ki = 1.0/2^slvals[2]
         clkgen.skews[[2,4]] .= slvals[3]*1e-12
         clkgen.rj = slvals[4]*1e-12
-        # Update TX↔RX frequency offset and the derived RX-UI stride.
-        # `osr_rx` must be kept consistent with `freq_offset_ppm`
-        # whenever the slider moves, otherwise the dynamic scheduling
-        # loop in step_sim_blk would still use the old stride.
+        # Update freq_offset_ppm and osr_rx together for dynamic scheduling.
         param.freq_offset_ppm = Float64(slvals[5])
         param.osr_rx = param.osr / (1 + param.freq_offset_ppm * 1e-6)
     end
@@ -201,8 +198,7 @@ function step_sim_subblk(trx, blk_idx)
 
     trx.param.cur_subblk = blk_idx
 
-    # NOTE: clkgen_pi_itp_top! is called by the caller (step_sim_blk)
-    # *before* this function — Φo_subblk is already populated.
+    # NOTE: caller has already generated Φo_subblk and confirmed readiness.
 
     sample_phi_top!(splr, eb, clkgen.Φo_subblk)
 

@@ -124,9 +124,7 @@ function sim_subblk(trx, blk_idx)
 
     param.cur_subblk = blk_idx
 
-    # NOTE: clkgen_pi_itp_top! is now called by the caller (sim_blk)
-    # *before* this function runs, and eb_can_read_times has already
-    # confirmed readiness.  Φo_subblk is populated; we just sample it.
+    # NOTE: caller has already generated Φo_subblk and confirmed readiness.
 
     sample_phi_top!(splr, eb, clkgen.Φo_subblk)
 
@@ -193,6 +191,5 @@ function sim_blk(trx, blk_idx)
     wvfm.eye1.x_ofst = 0#round(-(cdr.pi_code/clkgen.pi_codes_per_ui)*wvfm.eye1.x_npts_ui[]+wvfm.eye1.x_npts[]/2)
     w_plot_test(wvfm, cond=(param.cur_blk%wvfm.plot_every_nblk==0))
 end
-
 
 
