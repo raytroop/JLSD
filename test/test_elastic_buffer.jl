@@ -123,6 +123,32 @@ end
     @test of == 0
 end
 
+@testset "Variable-length RX symbol buffers resize per delivered block" begin
+    bits_per_sym = 1
+    si = UInt8[]
+    si_bits = Bool[]
+    ref_bits = Bool[]
+
+    function resize_rx_buffers!(si, si_bits, ref_bits, received)
+        append!(si, received)
+        nsym = length(si)
+        if nsym == 0
+            empty!(si)
+            return length(si_bits), length(ref_bits), length(si)
+        end
+        nbits = bits_per_sym * nsym
+        resize!(si_bits, nbits)
+        resize!(ref_bits, nbits)
+        empty!(si)
+        return length(si_bits), length(ref_bits), length(si)
+    end
+
+    @test resize_rx_buffers!(si, si_bits, ref_bits, UInt8[]) == (0, 0, 0)
+    @test resize_rx_buffers!(si, si_bits, ref_bits, UInt8[0, 1, 1]) == (3, 3, 0)
+    @test resize_rx_buffers!(si, si_bits, ref_bits, UInt8[1]) == (1, 1, 0)
+    @test resize_rx_buffers!(si, si_bits, ref_bits, UInt8.(ones(1024))) == (1024, 1024, 0)
+end
+
 @testset "ElasticBuffer — positive ppm (RX faster) eventually underflows" begin
     freq_offset_ppm = 100.0
     nblks = 20_000
