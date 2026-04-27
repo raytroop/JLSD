@@ -45,9 +45,8 @@ function clkgen_pi_itp_top!(clkgen, eb; pi_code)
         pi_wrap_ui -= sign(Δpi_code)*pi_ui_cover
     end
 
-    # Φ0 lives in RX-UI units → scale by osr_rx (PR #7 lesson: scaling
-    # by the nominal `osr` here would inject a small constant timing
-    # error proportional to ppm).
+    # Φ0 lives in RX-UI units; scaling by nominal `osr` would inject a
+    # constant timing error proportional to the frequency offset.
     Φ0    = osr_rx*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
     Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr_rx)
     Φrj   = (rj/tui)*osr_rx*randn(subblk_size)

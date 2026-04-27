@@ -81,8 +81,9 @@ function ber_checker_top!(bist)
     end
 
     if ~isempty(gen_gray_map)
-        # Broadcasted getindex applies the lookup table to the variable-length block.
-        Si .= getindex.(Ref(gen_gray_map), Si .+ 1)
+        for n in 1:nsym
+            Si[n] = gen_gray_map[Si[n] + 1]
+        end
     end
 
     # Resize working buffers to match the actual number of symbols this
@@ -138,7 +139,7 @@ function ber_check_prbs!(bist)
                     ref_bits_rem = @view ref_bits[1:remaining]
                     bist_prbs_gen!(ref_bits_rem, poly=polynomial, inv=inv,
                                    Nsym=remaining, seed=chk_seed)
-                    bist.ber_err_cnt += sum((@view Si_bits[n+1:nbits_rcvd]) .⊻ ref_bits_rem)
+                    bist.ber_err_cnt += sum((@view Si_bits[n+1:n+remaining]) .⊻ ref_bits_rem)
                     bist.ber_bit_cnt += remaining
                 end
                 break

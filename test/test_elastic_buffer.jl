@@ -133,7 +133,6 @@ end
         append!(si, received)
         nsym = length(si)
         if nsym == 0
-            empty!(si)
             return length(si_bits), length(ref_bits), length(si)
         end
         nbits = bits_per_sym * nsym
