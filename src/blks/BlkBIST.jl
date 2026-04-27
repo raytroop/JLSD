@@ -138,7 +138,7 @@ function ber_check_prbs!(bist)
                     ref_bits_rem = @view ref_bits[1:remaining]
                     bist_prbs_gen!(ref_bits_rem, poly=polynomial, inv=inv,
                                    Nsym=remaining, seed=chk_seed)
-                    bist.ber_err_cnt += sum((@view Si_bits[n+1:end]) .⊻ ref_bits_rem)
+                    bist.ber_err_cnt += sum((@view Si_bits[n+1:nbits_rcvd]) .⊻ ref_bits_rem)
                     bist.ber_bit_cnt += remaining
                 end
                 break

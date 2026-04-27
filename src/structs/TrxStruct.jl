@@ -72,6 +72,7 @@ end
     ref_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
 
     So_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
+    # TX still generates one fixed-size block each outer-loop iteration.
     So::Vector = zeros(param.blk_size)
     # Elastic-buffer scheduling can deliver a variable number of RX symbols
     # per TX block, so keep the block's received symbols in a resizable vector.

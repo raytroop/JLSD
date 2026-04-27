@@ -87,6 +87,7 @@ Linear interpolation of the buffered waveform at the float TX-grid time
     k0       = floor(Int, t)
     α        = t - k0
     capacity = eb.capacity
+    # eb_can_read_times guarantees k0 and k0+1 are present in the live ring window.
     @inbounds v0 = eb.buf[ k0       % capacity + 1]
     @inbounds v1 = eb.buf[(k0 + 1)  % capacity + 1]
     return muladd(α, v1 - v0, v0)

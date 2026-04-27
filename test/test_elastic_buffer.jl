@@ -165,8 +165,8 @@ end
 @testset "ElasticBuffer — interpolation accuracy on a ramp" begin
     param = TParam()
     eb    = TEB(param = param)
-    ramp  = collect(Float64, 0:param.blk_size_osr - 1)
-    eb_write!(eb, ramp)
+    test_ramp = collect(Float64, 0:param.blk_size_osr - 1)
+    eb_write!(eb, test_ramp)
 
     for t in (0.0, 1.5, 100.7, Float64(param.blk_size_osr - 2))
         @test eb_interp(eb, t) ≈ t  atol=1e-12
