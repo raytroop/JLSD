@@ -3,7 +3,7 @@ using Parameters, DataStructures, DSP, FFTW
 using GLMakie, Makie, ColorSchemes
 
 
-export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm
+export Param, Bist, Drv, Ch, Clkgen, Splr, Slicers, Cdr, Adpt, Eye, Wvfm, RxWindow
 
 
 const PRBS7 = [6, 7]
@@ -34,6 +34,14 @@ const PRBS31 = [28,31]
 
     const rand_seed = 300
 
+    # TX/RX frequency offset.  ppm > 0 means RX clock is faster than TX:
+    #   f_rx    = f_tx * (1 + freq_offset_ppm * 1e-6)
+    #   osr_rx  = osr  / (1 + freq_offset_ppm * 1e-6)   (TX-grid samples per RX UI)
+    # Mutable so the Widget slider can change them at runtime; the slider
+    # callback must keep osr_rx consistent with freq_offset_ppm.
+    freq_offset_ppm::Float64 = 0.0
+    osr_rx::Float64 = osr / (1 + freq_offset_ppm * 1e-6)
+
     cur_blk = 0
     cur_subblk = 0
 
@@ -62,7 +70,7 @@ end
 
     So_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
     So::Vector = zeros(param.blk_size)
-    Si = CircularBuffer{UInt8}(param.blk_size)
+    Si::Vector{UInt8} = UInt8[]
     Si_bits::Vector = zeros(Bool, param.bits_per_sym*param.blk_size)
 
 end
@@ -174,6 +182,11 @@ end
     pi_codes_per_ui = 2^pi_res/pi_ui_cover
     pi_nonlin_lut = zeros(2^pi_res) #introduce INL here
     pi_code_prev = 0
+    # pi_wrap_ui: legacy field, no longer read by clkgen_pi_itp_top!.
+    # In the new t_rx-based scheduler, PI-wrap discontinuities are absorbed
+    # into rxw.t_rx (see BlkRX.clkgen_pi_itp_top!), not accumulated here.
+    # Retained for struct stability; pi_wrap_ui_Δcode is still used as the
+    # wrap-detection threshold.
     pi_wrap_ui = 0
     pi_wrap_ui_Δcode = pi_max_code-10
 
@@ -287,6 +300,44 @@ end
     clk_rj = 0.0
     noise_rms = 0.0
 end
+
+"""
+    RxWindow
+
+A sliding window of the analog (oversampled) waveform that the RX sampler
+interpolates at arbitrarily-spaced RX-clock instants.  Decouples TX block
+production from RX sub-block consumption so that an arbitrary, possibly
+non-integer ratio between TX and RX clock rates can be modelled.
+
+Time variables are in **TX-grid sample-index units** (integer for the
+write side, Float64 for the read cursor).
+
+- `t_min`  : oldest sample available in the ring (inclusive)
+- `t_max`  : exclusive write frontier (total samples written so far)
+- `t_rx`   : RX read cursor, persists across blocks
+
+Capacity is `4 * blk_size_osr` — four TX blocks of headroom.  The tight
+greedy-scheduler bound is `2 * blk_size_osr` (see freq_offset_formulas.md
+§10), but `4×` adds margin for slider extremes (±500 ppm) where the CDR
+loop may not track perfectly and Φ0 swings can transiently throttle the
+scheduler.  Cost: an extra ~96 kB of Float64 — negligible.
+
+Unlike a digital FIFO, this is NOT a symbol-layer elastic buffer — it
+holds continuous analog waveform.  Overrun therefore corrupts the
+sampled waveform with a step discontinuity, so `rxw_extend!` raises a
+hard error rather than silently dropping samples.  Underrun is benign:
+the scheduler's `rxw_covers` check returns false and the inner loop
+breaks until the next TX block arrives.
+"""
+@kwdef mutable struct RxWindow
+    const param::Param
+    const capacity::Int = 4 * param.blk_size_osr
+    buf::Vector{Float64} = zeros(capacity)
+    t_min::Int    = 0
+    t_max::Int    = 0
+    t_rx::Float64 = 0.0
+end
+
 
 @kwdef mutable struct Wvfm
     const param::Param

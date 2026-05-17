@@ -3,57 +3,198 @@ using UnPack, DSP, Random, Interpolations
 include("../util/Util_JLSD.jl"); using .Util_JLSD
 
 export clkgen_pi_itp_top!
-export sample_itp_top!, sample_phi_top!, slicers_top!
+export sample_itp_top!, sample_phi_top!, sample_filter_top!, slicers_top!
 export cdr_top!, adpt_top!
+export rxw_extend!, rxw_covers, rxw_interp
 
 
-function clkgen_pi_itp_top!(clkgen; pi_code)
-    @unpack tui, osr, cur_subblk, subblk_size = clkgen.param
-    @unpack nphases, rj, skews = clkgen
-    @unpack pi_code_prev, pi_wrap_ui, pi_wrap_ui_Δcode = clkgen
-    @unpack pi_nonlin_lut, pi_ui_cover, pi_codes_per_ui = clkgen
+# ── RxWindow helpers ─────────────────────────────────────────────────────────
 
-    Δpi_code = pi_code-pi_code_prev
-    if abs(Δpi_code) > pi_wrap_ui_Δcode
-        pi_wrap_ui -= sign(Δpi_code)*pi_ui_cover
+"""
+    rxw_extend!(rxw, waveform)
+
+Append `waveform` (one TX block of filtered samples on the TX grid) to
+the RX window, advancing the write frontier `t_max`.
+
+1. Reclaims storage already consumed by RX: `t_min ← max(t_min, floor(t_rx))`.
+2. Hard-errors on overrun — silent overwrite would corrupt the continuous
+   analog signal with a step discontinuity and invalidate downstream
+   CDR / BER results.
+
+Underrun (RX cursor outran TX writer) is not handled here; the inner-loop
+`rxw_covers` check breaks the scheduler benignly when that happens.
+"""
+function rxw_extend!(rxw, waveform::AbstractVector{Float64})
+    rxw.t_min = max(rxw.t_min, floor(Int, rxw.t_rx))
+
+    n = length(waveform)
+    if (rxw.t_max + n) - rxw.t_min > rxw.capacity
+        error("""
+        RxWindow overrun: TX about to overwrite analog samples that RX has
+        not yet consumed.  This would inject a step discontinuity into the
+        sampled waveform and invalidate downstream BER / CDR results.
+
+        t_min = $(rxw.t_min)   t_max = $(rxw.t_max)   t_rx = $(rxw.t_rx)
+        next write of $n samples would push t_max to $(rxw.t_max + n)
+        capacity = $(rxw.capacity)
+
+        Resolve by reducing |freq_offset_ppm|, ensuring the RX scheduler
+        is greedy, or constructing RxWindow with a larger capacity.
+        """)
     end
 
-    Φ0 = osr*(pi_wrap_ui + (pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui)
-    Φstart = (cur_subblk-1)*subblk_size*osr
-    Φnom = Φstart:osr:Φstart+(subblk_size-1)*osr
-    Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
-    Φrj = rj/tui*osr*randn(subblk_size)
+    cap = rxw.capacity
+    t_start = rxw.t_max
+    @inbounds for i = 0:n-1
+        rxw.buf[(t_start + i) % cap + 1] = waveform[i + 1]
+    end
+    rxw.t_max += n
+    return nothing
+end
 
-    @. clkgen.Φo_subblk = Φ0 + Φnom + Φskew + Φrj
+"""
+    rxw_covers(rxw, Φi) -> Bool
 
-    clkgen.pi_code_prev = pi_code
-    clkgen.pi_wrap_ui = pi_wrap_ui
-    append!(clkgen.Φo, clkgen.Φo_subblk)
+Return `true` when the RX window contains enough data for linear
+interpolation at every time in `Φi`.  Has no side effects.
 
+Checks
+- `floor(min(Φi))     >= t_min`
+- `floor(max(Φi)) + 1 <  t_max`         (the `+1` is the k+1 interp tap)
+
+`Φi` already encodes Φ0 (PI/CDR phase), Φskew (clock skew), and Φrj
+(random jitter), so the check uses the *actual* upcoming sample times
+rather than nominal-spacing predictions.
+"""
+function rxw_covers(rxw, Φi)
+    t_need_min = floor(Int, minimum(Φi))
+    t_need_max = floor(Int, maximum(Φi)) + 1
+    return t_need_min >= rxw.t_min && t_need_max < rxw.t_max
+end
+
+"""
+    rxw_interp(rxw, t) -> Float64
+
+Linear interpolation of the RX window at Float64 TX-grid time `t`.
+Caller must ensure `t ∈ [t_min, t_max - 1]` (use `rxw_covers` to verify).
+"""
+@inline function rxw_interp(rxw, t::Float64)
+    k0   = floor(Int, t)
+    frac = t - k0
+    cap  = rxw.capacity
+    v0   = rxw.buf[k0       % cap + 1]
+    v1   = rxw.buf[(k0 + 1) % cap + 1]
+    return muladd(frac, v1 - v0, v0)
 end
 
 
+# ── RX block functions ───────────────────────────────────────────────────────
 
+
+"""
+    clkgen_pi_itp_top!(clkgen, rxw; pi_code)
+
+Populate `clkgen.Φo_subblk` with the absolute TX-grid sampling times for
+the next RX sub-block, anchored at the RX read cursor `rxw.t_rx`.
+
+- Inter-sample spacing is `osr_rx` (TX-grid samples per RX UI).
+- CDR/PI phase offset `Φ0` is scaled by `osr_rx` because `pi_ui_cover` is
+  expressed in RX-clock UI.
+- Skew and RJ are absolute timing deviations, converted via `osr/t_ui`.
+
+The caller is responsible for `append!(clkgen.Φo, clkgen.Φo_subblk)` AFTER
+confirming `rxw_covers` succeeds, so that `Φo` history contains only
+committed sub-blocks.  The caller also advances `rxw.t_rx` by
+`subblk_size * osr_rx` after the sub-block is sampled.
+"""
+function clkgen_pi_itp_top!(clkgen, rxw; pi_code)
+    @unpack tui, osr, osr_rx, subblk_size = clkgen.param
+    @unpack nphases, rj, skews = clkgen
+    @unpack pi_code_prev, pi_wrap_ui_Δcode = clkgen
+    @unpack pi_nonlin_lut, pi_ui_cover, pi_codes_per_ui = clkgen
+
+    Δpi_code = pi_code - pi_code_prev
+    if abs(Δpi_code) > pi_wrap_ui_Δcode
+        # When pi_code wraps (e.g. 255→0 for ppm<0), absorb the pi_ui_cover
+        # discontinuity into rxw.t_rx so the absolute sampling phase remains
+        # continuous.  This replaces the legacy pi_wrap_ui term in Φ0 —
+        # otherwise, for non-zero ppm the CDR's cumulative drift compensation
+        # would double-count with the dynamic scheduler (which already tracks
+        # the average drift via osr_rx-spaced t_rx advancement), inflating Φ0
+        # without bound and eventually throttling the scheduler into overrun.
+        rxw.t_rx -= sign(Δpi_code) * pi_ui_cover * osr_rx
+    end
+
+    # Φ0 is now bounded in [0, pi_ui_cover · osr_rx) — a fine within-PI phase
+    # correction, not a cumulative drift term.
+    Φ0    = osr_rx*(pi_code + pi_nonlin_lut[pi_code+1])/pi_codes_per_ui
+    Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
+    Φrj   = rj/tui*osr*randn(subblk_size)
+
+    t_rx = rxw.t_rx
+    @inbounds for j = 0:subblk_size-1
+        clkgen.Φo_subblk[j+1] = Φ0 + t_rx + j*osr_rx + Φskew[j+1] + Φrj[j+1]
+    end
+
+    clkgen.pi_code_prev = pi_code
+    # NOTE: append!(clkgen.Φo, clkgen.Φo_subblk) intentionally omitted.
+    # The caller appends only after rxw_covers confirms the buffer is ready.
+end
+
+
+"""
+    sample_filter_top!(splr, Vi)
+
+Convolve the channel waveform `Vi` with the sampler bandwidth-limit
+impulse response, writing the result into `splr.Vo` (block-stitched via
+`splr.Vo_mem`).  This is the analog-domain pre-sampling filter; the
+result is then handed to the RxWindow.
+"""
+function sample_filter_top!(splr, Vi)
+    @unpack dt = splr.param
+    @unpack ir, Vo_conv, Vo_mem = splr
+    u_conv!(Vo_conv, Vi, ir, Vi_mem=Vo_mem, gain=dt)
+    return nothing
+end
+
+
+"""
+    sample_itp_top!(splr, Vi)
+
+Legacy path: filter the channel waveform and build a block-local
+interpolation object.  Retained for compatibility; the freq-offset path
+uses `sample_filter_top!` + `rxw_extend!` + `rxw_interp` instead.
+"""
 function sample_itp_top!(splr, Vi)
-    @unpack osr,dt, blk_size_osr = splr.param
+    @unpack osr, dt, blk_size_osr = splr.param
     @unpack ir, Vo_conv, Vo, Vo_mem = splr
     @unpack prev_nui, V_prev_nui, Vext, tt_Vext = splr
 
-    u_conv!(Vo_conv, Vi, ir, Vi_mem=Vo_mem, gain=dt)
+    sample_filter_top!(splr, Vi)
 
     Vext[eachindex(V_prev_nui)] .= V_prev_nui
     Vext[lastindex(V_prev_nui)+1:end] .= Vo
     splr.itp_Vext = linear_interpolation(tt_Vext, Vext)
 end
 
-function sample_phi_top!(splr, Φi)
-    @unpack cur_subblk, subblk_size = splr.param
-    @unpack itp_Vext = splr
 
-    splr.So_subblk .= itp_Vext.(Φi)
+"""
+    sample_phi_top!(splr, rxw, Φi)
+
+Sample the RX window `rxw` at the absolute TX-grid times in `Φi` using
+linear interpolation.  Result is written to `splr.So_subblk` and appended
+to `splr.So`.
+
+Caller must have already verified `rxw_covers(rxw, Φi)`.
+"""
+function sample_phi_top!(splr, rxw, Φi)
+    @inbounds for j = eachindex(Φi)
+        splr.So_subblk[j] = rxw_interp(rxw, Φi[j])
+    end
     append!(splr.So, splr.So_subblk)
-
+    return nothing
 end
+
 
 function slicers_top!(slc, Si; ref_code)
     @unpack nphases, noise_rms, dac_min, dac_lsb = slc
