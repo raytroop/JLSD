@@ -14,7 +14,7 @@ The modeling framework is based on custom structs and block simulations. The cod
 In the Pluto Notebooks directory, you will find the .jl files for the notebooks to be viewed and played with on your local machine. .html and .pdf files are also included in the directory.
 
 ## Standalone widget
-Currently, there is a demo widget powered by Makie (shown below. Simply run Main_UI.jl and start playing with a basic SerDes model's parameters. The model consists of a relatively detailed transmitter, a low-loss channel, and a simple receiver w/ baud-rate CDR. Note that the widget might be continuously updated to include more (common) features. Use this as an example to extend to your own models.
+Currently, there is a demo widget powered by Makie (shown below. Simply run `Main_UI.jl` and start playing with a basic SerDes model's parameters. The model consists of a relatively detailed transmitter, a low-loss channel, and a simple receiver w/ baud-rate CDR. Note that the widget might be continuously updated to include more (common) features. Use this as an example to extend to your own models.
 ![widget_ui](https://github.com/kevjzheng/JLSD/blob/main/img/widget_ui.png)
 
 ---
@@ -33,7 +33,7 @@ derivation, etc.) see [freq_offset_formulas.md](./freq_offset_formulas.md).
 
 ### Sign convention
 
-$$f_{rx} = f_{tx}\,(1 + \text{ppm}\cdot 10^{-6}),\qquad \text{osr\_rx} = \frac{\text{osr}}{1 + \text{ppm}\cdot 10^{-6}}$$
+$$f_{rx} = f_{tx}\,(1 + \text{ppm}\cdot 10^{-6}),\qquad \text{osr}\_\text{rx} = \frac{\text{osr}}{1 + \text{ppm}\cdot 10^{-6}}$$
 
 - `freq_offset_ppm > 0` → RX clock is faster than TX
 - `freq_offset_ppm < 0` → RX clock is slower than TX
@@ -61,7 +61,7 @@ arbitrarily-spaced RX-clock instants.
 
 The outer block loop is replaced by a **dynamic sub-block scheduler**:
 each TX block, the scheduler drains as many sub-blocks as fit, then
-hands control back to TX.  Under freq_offset_ppm ≠ 0 the per-block count
+hands control back to TX.  Under `freq_offset_ppm` ≠ 0 the per-block count
 oscillates around `nsubblk·(1+ppm·10⁻⁶)` (e.g. 31 / 32 / 33 for
 `subblk_size=32`).
 
@@ -98,7 +98,7 @@ invariant violation.
 In the legacy block-aligned scheduler, `Φ0` carried the full CDR phase
 correction:
 
-$$\Phi_0^{\text{legacy}} = \text{osr}\cdot\bigl(\text{pi\_wrap\_ui} + \text{pi\_code}/\text{pi\_codes\_per\_ui}\bigr)$$
+$$\Phi_0^{\text{legacy}} = \text{osr}\cdot\bigl(\text{pi}\_\text{wrap}\_\text{ui} + \text{pi}\_\text{code}/\text{pi}\_\text{codes}\_\text{per}\_\text{ui}\bigr)$$
 
 `pi_wrap_ui` accumulated the CDR's cumulative ppm-drift compensation
 across PI wraps.
@@ -112,12 +112,12 @@ scheduler into overrun.
 The fix: when `pi_code` wraps (`|Δpi_code| > pi_wrap_ui_Δcode`), absorb
 the `pi_ui_cover` discontinuity into `t_rx` instead of `pi_wrap_ui`:
 
-$$t_{rx} \leftarrow t_{rx} - \text{sign}(\Delta\text{pi\_code})\cdot\text{pi\_ui\_cover}\cdot\text{osr\_rx}$$
+$$t_{rx} \leftarrow t_{rx} - \text{sign}(\Delta\text{pi}\_\text{code})\cdot\text{pi}\_\text{ui}\_\text{cover}\cdot\text{osr}\_\text{rx}$$
 
-$$\Phi_0 = \text{osr\_rx}\cdot\frac{\text{pi\_code}+\text{pi\_nonlin\_lut}[\text{pi\_code}+1]}{\text{pi\_codes\_per\_ui}}$$
+$$\Phi_0 = \text{osr}\_\text{rx}\cdot\frac{\text{pi}\_\text{code}+\text{pi}\_\text{nonlin}\_\text{lut}[\text{pi}\_\text{code}+1]}{\text{pi}\_\text{codes}\_\text{per}\_\text{ui}}$$
 
 This keeps absolute sample positions continuous while bounding $\Phi_0$
-in $[0,\;\text{pi\_ui\_cover}\cdot\text{osr\_rx})$.  The CDR's fine
+in $[0,\;\text{pi}\_\text{ui}\_\text{cover}\cdot\text{osr}\_\text{rx})$.  The CDR's fine
 within-PI correction still works; the cumulative drift is tracked
 exactly once.
 
@@ -131,13 +131,13 @@ trackable ppm.
 
 The integrator-equilibrium drift rate is approximately
 
-$$\text{drift rate}\;[\text{pi\_codes / sub-block}] \;\approx\; \text{ki}\cdot N_{\text{votes/sub-block}}\cdot \text{vote bias}$$
+$$\text{drift rate}\;[\text{pi}\_\text{codes / sub-block}] \;\approx\; \text{ki}\cdot N_{\text{votes/sub-block}}\cdot \text{vote bias}$$
 
 Required drift for ppm tracking:
 
-$$\text{required}\;=\;\frac{\text{ppm}\cdot 10^{-6}\cdot \text{osr}\cdot \text{subblk\_size}}{\text{osr\_rx}}\cdot\text{pi\_codes\_per\_ui}\;\approx\;\text{ppm}\cdot 10^{-6}\cdot 32\cdot 64$$
+$$\text{required}\;=\;\frac{\text{ppm}\cdot 10^{-6}\cdot \text{osr}\cdot \text{subblk}\_\text{size}}{\text{osr}\_\text{rx}}\cdot\text{pi}\_\text{codes}\_\text{per}\_\text{ui}\;\approx\;\text{ppm}\cdot 10^{-6}\cdot 32\cdot 64$$
 
-For `subblk_size=32`, `pi_codes_per_ui=64`: required ≈ `2.05 × ppm × 10⁻³` pi_codes/sub-block.
+For `subblk_size=32`, `pi_codes_per_ui=64`: required ≈ `2.05 × ppm × 10⁻³` `pi_codes`/sub-block.
 
 Practical tracking range (empirical, default kp=1/2⁶, full
 `nblk = 977` run):

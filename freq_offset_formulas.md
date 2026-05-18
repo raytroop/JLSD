@@ -10,17 +10,17 @@ window + dynamic sub-block scheduling).  All time variables are measured in
 
 $$f_{rx} = f_{tx}\,(1 + \text{ppm}\cdot 10^{-6})$$
 
-$$\text{osr\_rx} = \frac{\text{osr}}{1 + \text{ppm}\cdot 10^{-6}}$$
+$$\text{osr}\_\text{rx} = \frac{\text{osr}}{1 + \text{ppm}\cdot 10^{-6}}$$
 
-$$\text{osr\_rx}_{\max} = \frac{\text{osr}}{1 - |\text{ppm}|_{\max}\cdot 10^{-6}} \approx \text{osr}\,(1 + |\text{ppm}|_{\max}\cdot 10^{-6})$$
+$$\text{osr}\_\text{rx}_{\max} = \frac{\text{osr}}{1 - |\text{ppm}|_{\max}\cdot 10^{-6}} \approx \text{osr}\,(1 + |\text{ppm}|_{\max}\cdot 10^{-6})$$
 
 Sign convention: $\text{ppm} > 0$ means RX clock is faster than TX
-($\text{osr\_rx} < \text{osr}$).
+($\text{osr}\_\text{rx} < \text{osr}$).
 
 **Greedy scheduler note.** Under the dynamic scheduler used here, the
 number of sub-blocks consumed per outer iteration
 
-$$k_n = \left\lfloor \frac{(t_{\max}-t_{rx})_{\text{after write}}}{\text{subblk\_size}\cdot\text{osr\_rx}} \right\rfloor$$
+$$k_n = \left\lfloor \frac{(t_{\max}-t_{rx})_{\text{after write}}}{\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx}} \right\rfloor$$
 
 is **not constant** — it adapts every iteration. The §8 proof then bounds
 $t_{\max}-t_{rx}$ by one sub-block **for both signs of ppm**; neither
@@ -33,8 +33,8 @@ risk.
 
 | Static schedule | per-block RX consumption | per-block TX production | failure mode |
 |---|---|---|---|
-| $\text{ppm} > 0$ | $\dfrac{\text{blk\_size\_osr}}{1+\text{ppm}\cdot 10^{-6}} < \text{blk\_size\_osr}$ | $\text{blk\_size\_osr}$ | **overrun** (writer outpaces reader) |
-| $\text{ppm} < 0$ | $> \text{blk\_size\_osr}$ | $\text{blk\_size\_osr}$ | **underrun** (reader outpaces writer) |
+| $\text{ppm} > 0$ | $\dfrac{\text{blk}\_\text{size}\_\text{osr}}{1+\text{ppm}\cdot 10^{-6}} < \text{blk}\_\text{size}\_\text{osr}$ | $\text{blk}\_\text{size}\_\text{osr}$ | **overrun** (writer outpaces reader) |
+| $\text{ppm} < 0$ | $> \text{blk}\_\text{size}\_\text{osr}$ | $\text{blk}\_\text{size}\_\text{osr}$ | **underrun** (reader outpaces writer) |
 
 ---
 
@@ -42,43 +42,43 @@ risk.
 
 Ignoring $\Phi_0$, $\Phi_{\text{skew}}$, $\Phi_{rj}$:
 
-$$\Phi_i[j] = t_{rx} + (j-1)\cdot\text{osr\_rx}, \qquad j = 1, 2, \ldots, \text{subblk\_size}$$
+$$\Phi_i[j] = t_{rx} + (j-1)\cdot\text{osr}\_\text{rx}, \qquad j = 1, 2, \ldots, \text{subblk}\_\text{size}$$
 
 $$\min_j \Phi_i[j] = t_{rx}$$
 
-$$\max_j \Phi_i[j] = t_{rx} + (\text{subblk\_size} - 1)\cdot\text{osr\_rx}$$
+$$\max_j \Phi_i[j] = t_{rx} + (\text{subblk}\_\text{size} - 1)\cdot\text{osr}\_\text{rx}$$
 
-A sub-block contains $\text{subblk\_size}$ **samples** spanning
-$\text{subblk\_size}-1$ intervals — hence the $(j-1)$ multiplier.
+A sub-block contains $\text{subblk}\_\text{size}$ **samples** spanning
+$\text{subblk}\_\text{size}-1$ intervals — hence the $(j-1)$ multiplier.
 
 ---
 
 ## 3. Full sample-time model (with perturbations)
 
-$$\Phi_i[j] = \underbrace{\Phi_0}_{\text{CDR/PI}} + \underbrace{t_{rx} + (j-1)\cdot\text{osr\_rx}}_{\text{nominal}} + \underbrace{\Phi_{\text{skew}}[j]}_{\text{clock skew}} + \underbrace{\Phi_{rj}[j]}_{\text{random jitter}}$$
+$$\Phi_i[j] = \underbrace{\Phi_0}_{\text{CDR/PI}} + \underbrace{t_{rx} + (j-1)\cdot\text{osr}\_\text{rx}}_{\text{nominal}} + \underbrace{\Phi_{\text{skew}}[j]}_{\text{clock skew}} + \underbrace{\Phi_{rj}[j]}_{\text{random jitter}}$$
 
-$$\Phi_0 = \text{osr\_rx}\cdot\frac{\text{pi\_code} + \text{pi\_nonlin\_lut}[\text{pi\_code}+1]}{\text{pi\_codes\_per\_ui}}$$
+$$\Phi_0 = \text{osr}\_\text{rx}\cdot\frac{\text{pi}\_\text{code} + \text{pi}\_\text{nonlin}\_\text{lut}[\text{pi}\_\text{code}+1]}{\text{pi}\_\text{codes}\_\text{per}\_\text{ui}}$$
 
 The legacy `pi_wrap_ui` term is **omitted** here.  In the legacy
 block-aligned framework, `pi_wrap_ui` absorbed the CDR's cumulative
 phase drift; including it in $\Phi_0$ under the new $t_{rx}$-based
 scheduler would double-count the ppm drift (already tracked by
-$\text{osr\_rx}$-spaced $t_{rx}$ advancement) and inflate $\Phi_0$ until
+$\text{osr}\_\text{rx}$-spaced $t_{rx}$ advancement) and inflate $\Phi_0$ until
 the greedy scheduler is throttled into overrun.  Instead, when the CDR's
-$\text{pi\_code}$ wraps ($|\Delta\text{pi\_code}| > \text{pi\_wrap\_ui\_}\Delta\text{code}$),
+$\text{pi}\_\text{code}$ wraps ($|\Delta\text{pi}\_\text{code}| > \text{pi}\_\text{wrap}\_\text{ui}\_\Delta\text{code}$),
 the discontinuity is absorbed into $t_{rx}$:
 
-$$t_{rx} \;\leftarrow\; t_{rx} \;-\; \text{sign}(\Delta\text{pi\_code})\cdot\text{pi\_ui\_cover}\cdot\text{osr\_rx}$$
+$$t_{rx} \;\leftarrow\; t_{rx} \;-\; \text{sign}(\Delta\text{pi}\_\text{code})\cdot\text{pi}\_\text{ui}\_\text{cover}\cdot\text{osr}\_\text{rx}$$
 
 This keeps absolute sample positions continuous while leaving $\Phi_0$
-bounded in $[0,\;\text{pi\_ui\_cover}\cdot\text{osr\_rx})$.
+bounded in $[0,\;\text{pi}\_\text{ui}\_\text{cover}\cdot\text{osr}\_\text{rx})$.
 
 $$\Phi_{\text{skew}}[j] = \frac{\text{skews}\bigl[((j-1)\bmod n_{\text{phases}})+1\bigr]}{t_{ui}}\cdot\text{osr}$$
 
 $$\Phi_{rj}[j] = \frac{r_j}{t_{ui}}\cdot\text{osr}\cdot \mathcal{N}(0,1)$$
 
-$\Phi_0$ is scaled by $\text{osr\_rx}$ because the PI covers
-$\text{pi\_ui\_cover}$ **RX-clock UI**.  Skew and jitter remain in absolute
+$\Phi_0$ is scaled by $\text{osr}\_\text{rx}$ because the PI covers
+$\text{pi}\_\text{ui}\_\text{cover}$ **RX-clock UI**.  Skew and jitter remain in absolute
 TX-grid sample units (converted via $\text{osr}/t_{ui}$).
 
 ---
@@ -100,7 +100,7 @@ linear interpolation.
 
 $$k_0 = \lfloor t \rfloor, \qquad \alpha = t - k_0$$
 
-$$\text{rxw\_interp}(t) = (1-\alpha)\cdot\text{buf}[k_0 \bmod C + 1] + \alpha\cdot\text{buf}[(k_0{+}1) \bmod C + 1]$$
+$$\text{rxw}\_\text{interp}(t) = (1-\alpha)\cdot\text{buf}[k_0 \bmod C + 1] + \alpha\cdot\text{buf}[(k_0{+}1) \bmod C + 1]$$
 
 where $C = \text{capacity}$.
 
@@ -112,15 +112,15 @@ $$\text{available} = t_{\max} - t_{rx}$$
 
 The greedy scheduler continues while `rxw_covers` is true:
 
-$$t_{\max} > \lfloor t_{rx} + (\text{subblk\_size} - 1)\cdot\text{osr\_rx} \rfloor + 1$$
+$$t_{\max} > \lfloor t_{rx} + (\text{subblk}\_\text{size} - 1)\cdot\text{osr}\_\text{rx} \rfloor + 1$$
 
 Approximating $\lfloor x\rfloor \approx x$, the loop exits when
 
-$$\text{available} \lesssim (\text{subblk\_size} - 1)\cdot\text{osr\_rx} + 1$$
+$$\text{available} \lesssim (\text{subblk}\_\text{size} - 1)\cdot\text{osr}\_\text{rx} + 1$$
 
-Difference vs. the looser bound $\text{subblk\_size}\cdot\text{osr\_rx}$:
+Difference vs. the looser bound $\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx}$:
 
-$$\text{subblk\_size}\cdot\text{osr\_rx} - \bigl[(\text{subblk\_size} - 1)\cdot\text{osr\_rx} + 1\bigr] = \text{osr\_rx} - 1$$
+$$\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx} - \bigl[(\text{subblk}\_\text{size} - 1)\cdot\text{osr}\_\text{rx} + 1\bigr] = \text{osr}\_\text{rx} - 1$$
 
 Using the loose bound would leave nearly one RX UI unused per iteration —
 slight under-utilisation, not a correctness bug.
@@ -129,9 +129,9 @@ slight under-utilisation, not a correctness bug.
 
 ## 7. Per-block sub-block count
 
-$$k = \left\lfloor \frac{\text{blk\_size\_osr}}{\text{subblk\_size}\cdot\text{osr\_rx}} \right\rfloor \approx \text{nsubblk}\,(1 + \text{ppm}\cdot 10^{-6})$$
+$$k = \left\lfloor \frac{\text{blk}\_\text{size}\_\text{osr}}{\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx}} \right\rfloor \approx \text{nsubblk}\,(1 + \text{ppm}\cdot 10^{-6})$$
 
-where $\text{nsubblk} = \dfrac{\text{blk\_size}}{\text{subblk\_size}}$.
+where $\text{nsubblk} = \dfrac{\text{blk}\_\text{size}}{\text{subblk}\_\text{size}}$.
 
 For $\text{ppm}>0$: $k$ tends to be larger than nominal $\text{nsubblk}$.
 For $\text{ppm}<0$: $k$ tends to be smaller.
@@ -144,28 +144,28 @@ After $n$ outer iterations, define
 
 $$m = n\cdot\text{nsubblk}\cdot(1 + \text{ppm}\cdot 10^{-6}), \qquad r = m - \lfloor m\rfloor \in [0, 1)$$
 
-$$t_{\max} = n\cdot\text{blk\_size\_osr}$$
+$$t_{\max} = n\cdot\text{blk}\_\text{size}\_\text{osr}$$
 
-$$t_{rx} = \lfloor m\rfloor\cdot\text{subblk\_size}\cdot\text{osr\_rx} = (m - r)\cdot\text{subblk\_size}\cdot\text{osr\_rx}$$
+$$t_{rx} = \lfloor m\rfloor\cdot\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx} = (m - r)\cdot\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx}$$
 
 Substituting:
 
 $$
 \begin{aligned}
 t_{\max} - t_{rx}
-&= n\cdot\text{blk\_size\_osr} - (m - r)\cdot\text{subblk\_size}\cdot\text{osr\_rx} \\
-&= n\cdot\text{blk\_size\_osr} - n\cdot\text{nsubblk}(1+\text{ppm}\cdot 10^{-6})\cdot\text{subblk\_size}\cdot\text{osr\_rx} + r\cdot\text{subblk\_size}\cdot\text{osr\_rx} \\
-&= n\cdot\text{blk\_size\_osr} - n\cdot\text{blk\_size\_osr} + r\cdot\text{subblk\_size}\cdot\text{osr\_rx} \\
-&= r\cdot\text{subblk\_size}\cdot\text{osr\_rx}
+&= n\cdot\text{blk}\_\text{size}\_\text{osr} - (m - r)\cdot\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx} \\
+&= n\cdot\text{blk}\_\text{size}\_\text{osr} - n\cdot\text{nsubblk}(1+\text{ppm}\cdot 10^{-6})\cdot\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx} + r\cdot\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx} \\
+&= n\cdot\text{blk}\_\text{size}\_\text{osr} - n\cdot\text{blk}\_\text{size}\_\text{osr} + r\cdot\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx} \\
+&= r\cdot\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx}
 \end{aligned}
 $$
 
 Used the identity
-$\text{nsubblk}(1+\text{ppm}\cdot 10^{-6})\cdot\text{subblk\_size}\cdot\text{osr\_rx} = \text{blk\_size\_osr}$.
+$\text{nsubblk}(1+\text{ppm}\cdot 10^{-6})\cdot\text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx} = \text{blk}\_\text{size}\_\text{osr}$.
 
 Therefore the steady-state pre-write occupancy is bounded:
 
-$$t_{\max} - t_{rx} < \text{subblk\_size}\cdot\text{osr\_rx}, \qquad \forall\,n$$
+$$t_{\max} - t_{rx} < \text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx}, \qquad \forall\,n$$
 
 The fractional residue $r$ oscillates within $[0,1)$ but **does not
 accumulate** — the greedy scheduler self-stabilises.
@@ -177,26 +177,26 @@ accumulate** — the greedy scheduler self-stabilises.
 The held window is $[t_{\min},\,t_{\max})$.  Its width just after a write is
 bounded by the sum of three terms:
 
-$$\text{occupancy}_{\max} \;=\; \underbrace{\text{blk\_size\_osr}}_{\text{(A) the write just done}} \;+\; \underbrace{(t_{\max}-t_{rx})_{\text{pre-write}}}_{\text{(B) post-drain residue}} \;+\; \underbrace{(t_{rx}-t_{\min})_{\text{reclaim slack}}}_{\text{(C) negative-phase reserve}}$$
+$$\text{occupancy}_{\max} \;=\; \underbrace{\text{blk}\_\text{size}\_\text{osr}}_{\text{(A) the write just done}} \;+\; \underbrace{(t_{\max}-t_{rx})_{\text{pre-write}}}_{\text{(B) post-drain residue}} \;+\; \underbrace{(t_{rx}-t_{\min})_{\text{reclaim slack}}}_{\text{(C) negative-phase reserve}}$$
 
 ### Term-by-term
 
 **(A) Write — exact.**
-$$(A) \;=\; \text{blk\_size\_osr}$$
+$$(A) \;=\; \text{blk}\_\text{size}\_\text{osr}$$
 
 **(B) Residue left by the inner-loop exit — bounded by one "fat" sub-block.**
 
 The inner loop exits when the next sub-block fails `rxw_covers`, i.e. when
 
-$$t_{\max} \;\le\; \lfloor t_{rx} + (\text{subblk\_size}-1)\cdot\text{osr\_rx} + \Phi_0^{\max} + \Phi_{\text{skew}}^{\max} + \Phi_{rj}^{\max}\rfloor + 1$$
+$$t_{\max} \;\le\; \lfloor t_{rx} + (\text{subblk}\_\text{size}-1)\cdot\text{osr}\_\text{rx} + \Phi_0^{\max} + \Phi_{\text{skew}}^{\max} + \Phi_{rj}^{\max}\rfloor + 1$$
 
 so
 
-$$(B) \;\le\; (\text{subblk\_size}-1)\cdot\text{osr\_rx} \;+\; \Phi_0^{\max} \;+\; \Phi_{\text{skew}}^{\max} \;+\; \Phi_{rj}^{\max} \;+\; 1$$
+$$(B) \;\le\; (\text{subblk}\_\text{size}-1)\cdot\text{osr}\_\text{rx} \;+\; \Phi_0^{\max} \;+\; \Phi_{\text{skew}}^{\max} \;+\; \Phi_{rj}^{\max} \;+\; 1$$
 
 with the per-perturbation envelopes:
 
-$$\Phi_0^{\max} \;=\; \text{pi\_ui\_cover}\cdot\text{osr\_rx}_{\max}$$
+$$\Phi_0^{\max} \;=\; \text{pi}\_\text{ui}\_\text{cover}\cdot\text{osr}\_\text{rx}_{\max}$$
 
 $$\Phi_{\text{skew}}^{\max} \;=\; \frac{\max|\text{skews}|}{t_{ui}}\cdot\text{osr}$$
 
@@ -223,16 +223,16 @@ $$(C) \;\le\; \Phi_0^{\max} + \Phi_{\text{skew}}^{\max} + \Phi_{rj}^{\max}$$
 
 Summing (A)+(B)+(C):
 
-$$\boxed{\;\text{capacity}_{\min} \;=\; \text{blk\_size\_osr} \;+\; (\text{subblk\_size}-1)\cdot\text{osr\_rx}_{\max} \;+\; 2\,(\Phi_0^{\max} + \Phi_{\text{skew}}^{\max} + \Phi_{rj}^{\max}) \;+\; 1\;}$$
+$$\boxed{\;\text{capacity}_{\min} \;=\; \text{blk}\_\text{size}\_\text{osr} \;+\; (\text{subblk}\_\text{size}-1)\cdot\text{osr}\_\text{rx}_{\max} \;+\; 2\,(\Phi_0^{\max} + \Phi_{\text{skew}}^{\max} + \Phi_{rj}^{\max}) \;+\; 1\;}$$
 
-For the default `Param` values ($\text{osr}{=}24$, $\text{subblk\_size}{=}32$,
-$\text{pi\_ui\_cover}{=}4$, $|\text{ppm}|_{\max}{=}500$, 3 ps skew, 0.3 ps RJ,
+For the default `Param` values ($\text{osr}{=}24$, $\text{subblk}\_\text{size}{=}32$,
+$\text{pi}\_\text{ui}\_\text{cover}{=}4$, $|\text{ppm}|_{\max}{=}500$, 3 ps skew, 0.3 ps RJ,
 $56\,\text{Gb/s}$):
 
 | Term | Value (TX-grid samples) |
 |---|---|
-| $\text{blk\_size\_osr}$ | $24576$ |
-| $(\text{subblk\_size}-1)\cdot\text{osr\_rx}_{\max}$ | $\approx 744$ |
+| $\text{blk}\_\text{size}\_\text{osr}$ | $24576$ |
+| $(\text{subblk}\_\text{size}-1)\cdot\text{osr}\_\text{rx}_{\max}$ | $\approx 744$ |
 | $2\,\Phi_0^{\max}$ | $\approx 192$ |
 | $2\,\Phi_{\text{skew}}^{\max}$ | $\approx 8$ |
 | $2\,\Phi_{rj}^{\max}$ | $\approx 3$ |
@@ -249,28 +249,28 @@ Adaptive to all `Param` values; recompute on construction.
 
 **(ii) Simplified safe default** — analytically sufficient:
 
-$$\text{capacity} \;=\; 2\cdot\text{blk\_size\_osr}$$
+$$\text{capacity} \;=\; 2\cdot\text{blk}\_\text{size}\_\text{osr}$$
 
-Two TX blocks of headroom.  Independent of $\text{ppm}$, $\text{pi\_ui\_cover}$,
+Two TX blocks of headroom.  Independent of $\text{ppm}$, $\text{pi}\_\text{ui}\_\text{cover}$,
 skew, or RJ.  About $1.9\times$ the tight bound.  Sufficient when the
 CDR is converged.
 
 **(iii) Recommended in practice** — robust against slider extremes:
 
-$$\boxed{\;\text{capacity} \;=\; 4\cdot\text{blk\_size\_osr}\;}$$
+$$\boxed{\;\text{capacity} \;=\; 4\cdot\text{blk}\_\text{size}\_\text{osr}\;}$$
 
 The greedy-scheduler proof assumes the CDR is converged.  At slider
 extremes ($|\text{ppm}|\sim 500$ with the default CDR gains), the CDR may
 fail to track and $\Phi_0$ may swing widely, transiently throttling the
-scheduler and growing the residue.  $4\cdot\text{blk\_size\_osr}$ absorbs
+scheduler and growing the residue.  $4\cdot\text{blk}\_\text{size}\_\text{osr}$ absorbs
 this margin and is the value `RxWindow` constructs by default.  Memory
 cost: $\approx 768\,\text{kB}$ of Float64 — negligible.
 
 ### What the implemented default absorbs
 
-$4\cdot\text{blk\_size\_osr} - \text{capacity}_{\min} \approx 73\,000$ samples
+$4\cdot\text{blk}\_\text{size}\_\text{osr} - \text{capacity}_{\min} \approx 73\,000$ samples
 of headroom — covers any plausible future increase in `subblk_size`,
-$\text{pi\_ui\_cover}$, skew/RJ, transient deviations from the greedy-scheduler
+$\text{pi}\_\text{ui}\_\text{cover}$, skew/RJ, transient deviations from the greedy-scheduler
 invariant (e.g. an outer loop that batches two writes before draining), and
 CDR-mistracking-induced $\Phi_0$ swings at slider extremes.
 
@@ -280,9 +280,9 @@ CDR-mistracking-induced $\Phi_0$ swings at slider extremes.
 
 Without $\Phi_0$/skew/RJ, the §8 analysis gives:
 
-$$\bigl|\,t_{\max} - t_{rx}\,\bigr|_{\text{nominal}} \;<\; \text{subblk\_size}\cdot\text{osr\_rx}$$
+$$\bigl|\,t_{\max} - t_{rx}\,\bigr|_{\text{nominal}} \;<\; \text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx}$$
 
-Independent of $n$ and $\text{nsym\_total}$ under greedy scheduling.  With
+Independent of $n$ and $\text{nsym}\_\text{total}$ under greedy scheduling.  With
 perturbations, replace the right-hand side with the §9-(B) envelope.
 
 ---
@@ -297,7 +297,7 @@ $$\text{buf}[\,t \bmod C + 1\,], \qquad C = \text{capacity}$$
 
 ## 13. Cursor advancement (per accepted sub-block)
 
-$$t_{rx} \leftarrow t_{rx} + \text{subblk\_size}\cdot\text{osr\_rx}$$
+$$t_{rx} \leftarrow t_{rx} + \text{subblk}\_\text{size}\cdot\text{osr}\_\text{rx}$$
 
 Applied **only after** `rxw_covers` returns true and the sub-block sampling
 has actually executed.
@@ -317,7 +317,7 @@ need on the low side; the §9-(C) term):
 $$t_{\min} \;\leftarrow\; \max\bigl(t_{\min},\;\lfloor t_{rx} - (\Phi_0^{\max}+\Phi_{\text{skew}}^{\max}+\Phi_{rj}^{\max})\rfloor\bigr)$$
 
 Either form is safe when paired with the §10 default capacity
-$2\cdot\text{blk\_size\_osr}$ and the §15 overrun guard, but only the
+$2\cdot\text{blk}\_\text{size}\_\text{osr}$ and the §15 overrun guard, but only the
 envelope-safe form guarantees that every PI/skew/RJ realisation can be
 served without spurious `rxw_covers` failures.
 
@@ -347,45 +347,45 @@ therefore directly bounds the maximum trackable ppm.
 Per RX sample the ppm-induced phase drift (relative to TX symbols) is
 $\text{ppm}\cdot 10^{-6}$ UI.  In `pi_code` units:
 
-$$\boxed{\;\Delta_{\text{drift}} \;=\; \text{subblk\_size}\cdot\text{pi\_codes\_per\_ui}\cdot\text{ppm}\cdot 10^{-6} \quad [\text{pi\_codes/sub-block}]\;}$$
+$$\boxed{\;\Delta_{\text{drift}} \;=\; \text{subblk}\_\text{size}\cdot\text{pi}\_\text{codes}\_\text{per}\_\text{ui}\cdot\text{ppm}\cdot 10^{-6} \quad [\text{pi}\_\text{codes/sub-block}]\;}$$
 
-For the default config ($\text{subblk\_size}=32$, $\text{pi\_codes\_per\_ui}=64$):
+For the default config ($\text{subblk}\_\text{size}=32$, $\text{pi}\_\text{codes}\_\text{per}\_\text{ui}=64$):
 
 $$\Delta_{\text{drift}} \;=\; 2.048\times 10^{-3}\cdot\text{ppm}$$
 
-For $\text{ppm}=100$: $\Delta_{\text{drift}} = 0.205$ pi_codes/sub-block.
+For $\text{ppm}=100$: $\Delta_{\text{drift}} = 0.205$ `pi_codes`/sub-block.
 
 ### 16.2 Steady-state `ki_accum`
 
-Per CDR call (per vote), $\text{pd\_accum}$ increments by
-$\text{kp}\cdot\text{vote} + \text{ki\_accum}$.  In equilibrium
-$\text{vote\_avg}\approx 0$ (samples mid-eye on average), so the
+Per CDR call (per vote), $\text{pd}\_\text{accum}$ increments by
+$\text{kp}\cdot\text{vote} + \text{ki}\_\text{accum}$.  In equilibrium
+$\text{vote}\_\text{avg}\approx 0$ (samples mid-eye on average), so the
 integrator must supply the drift entirely:
 
-$$\boxed{\;\text{ki\_accum}_{\infty} \;=\; \frac{\Delta_{\text{drift}}}{N_v}\;}$$
+$$\boxed{\;\text{ki}\_\text{accum}_{\infty} \;=\; \frac{\Delta_{\text{drift}}}{N_v}\;}$$
 
 where $N_v$ is the average **biased** votes per sub-block.  For this
 simulator:
-- $\text{eslc.N\_per\_phi} = [1,0,0,0]$ ⇒ 8 candidate edge positions per sub-block
-- $\text{filt\_patterns} = \{[0,1,1],\,[1,1,0]\}$ ⇒ ~25 % of patterns fire on PRBS data
+- $\text{eslc.N}\_\text{per}\_\text{phi} = [1,0,0,0]$ ⇒ 8 candidate edge positions per sub-block
+- $\text{filt}\_\text{patterns} = \{[0,1,1],\,[1,1,0]\}$ ⇒ ~25 % of patterns fire on PRBS data
 - $N_v \approx 8\times 0.25 = 2$ votes/sub-block
 
-So $\text{ki\_accum}_\infty(\text{ppm}=100) = 0.205/2 \approx 0.103$ —
+So $\text{ki}\_\text{accum}_\infty(\text{ppm}=100) = 0.205/2 \approx 0.103$ —
 matches the trace.
 
 ### 16.3 Transient overshoot (the binding constraint)
 
-Reaching $\text{ki\_accum}_\infty$ takes time.  During the transient,
+Reaching $\text{ki}\_\text{accum}_\infty$ takes time.  During the transient,
 the phase error $e$ grows.  If $|e|$ exceeds half a UI ($\sim 32$
-pi_codes), the BB-PD votes on the wrong symbol boundary and the loop
+`pi_codes`), the BB-PD votes on the wrong symbol boundary and the loop
 locks to a bogus point — the empirical "BER = 0.5" failure mode.
 
-Starting from $\text{ki\_accum}(0)=0$ with saturated votes ($|\text{vote}|=1$)
+Starting from $\text{ki}\_\text{accum}(0)=0$ with saturated votes ($|\text{vote}|=1$)
 during pull-in:
 
-$$\text{ki\_accum}(n) \;\approx\; n\cdot\text{ki}\cdot N_v$$
+$$\text{ki}\_\text{accum}(n) \;\approx\; n\cdot\text{ki}\cdot N_v$$
 
-Tracking rate at sub-block $n$ is $\text{ki\_accum}(n)\cdot N_v = n\cdot\text{ki}\cdot N_v^2$, so
+Tracking rate at sub-block $n$ is $\text{ki}\_\text{accum}(n)\cdot N_v = n\cdot\text{ki}\cdot N_v^2$, so
 
 $$\frac{de}{dn} \;=\; \Delta_{\text{drift}} - n\cdot\text{ki}\cdot N_v^2$$
 
@@ -397,7 +397,7 @@ $$\boxed{\;e_{\text{peak}} \;=\; \frac{\Delta_{\text{drift}}^2}{2\,\text{ki}\,N_
 
 ### 16.4 Lock-loss threshold ⇒ `ki_min`
 
-Require $e_{\text{peak}} < e_{\text{lock}}$ where $e_{\text{lock}} \approx 32$ pi_codes ($=$ half UI):
+Require $e_{\text{peak}} < e_{\text{lock}}$ where $e_{\text{lock}} \approx 32$ `pi_codes` ($=$ half UI):
 
 $$\frac{\Delta_{\text{drift}}^2}{2\,\text{ki}\,N_v^2} \;<\; e_{\text{lock}}$$
 
@@ -455,12 +455,12 @@ $\text{kp}=1/2^6$ unchanged.
 | Symbol | Meaning |
 |---|---|
 | $\text{osr}$ | TX-grid samples per nominal UI |
-| $\text{osr\_rx}$ | TX-grid samples per RX-clock UI |
+| $\text{osr}\_\text{rx}$ | TX-grid samples per RX-clock UI |
 | $\text{ppm}$ | RX/TX frequency offset, parts per million |
-| $\text{blk\_size}$ | symbols per TX block |
-| $\text{blk\_size\_osr}$ | $\text{blk\_size}\cdot\text{osr}$ — TX-grid samples per block |
-| $\text{subblk\_size}$ | symbols per RX sub-block |
-| $\text{nsubblk}$ | $\text{blk\_size}/\text{subblk\_size}$ |
+| $\text{blk}\_\text{size}$ | symbols per TX block |
+| $\text{blk}\_\text{size}\_\text{osr}$ | $\text{blk}\_\text{size}\cdot\text{osr}$ — TX-grid samples per block |
+| $\text{subblk}\_\text{size}$ | symbols per RX sub-block |
+| $\text{nsubblk}$ | $\text{blk}\_\text{size}/\text{subblk}\_\text{size}$ |
 | $t_{ui}$ | nominal UI period (seconds) |
 | $t_{rx}$ | RX read cursor (TX-grid sample index, Float64) |
 | $t_{\min}$, $t_{\max}$ | RxWindow time frontiers (TX-grid sample index, Int) |
@@ -468,11 +468,11 @@ $\text{kp}=1/2^6$ unchanged.
 | $\Phi_0$ | CDR / PI phase offset (TX-grid samples) |
 | $\Phi_{\text{skew}}$ | per-phase clock skew (TX-grid samples) |
 | $\Phi_{rj}$ | per-sample random jitter (TX-grid samples) |
-| $\text{pi\_ui\_cover}$ | PI coverage in RX-clock UI |
+| $\text{pi}\_\text{ui}\_\text{cover}$ | PI coverage in RX-clock UI |
 | $n_{\text{phases}}$ | number of clock phases (e.g. 4) |
-| $\text{pi\_codes\_per\_ui}$ | PI resolution: pi_codes per RX UI (e.g. 64) |
+| $\text{pi}\_\text{codes}\_\text{per}\_\text{ui}$ | PI resolution: `pi_codes` per RX UI (e.g. 64) |
 | $\text{kp}$, $\text{ki}$ | CDR proportional / integral gains |
-| $\text{ki\_accum}$, $\text{pd\_accum}$ | CDR integrator state, total phase accumulator |
+| $\text{ki}\_\text{accum}$, $\text{pd}\_\text{accum}$ | CDR integrator state, total phase accumulator |
 | $N_v$ | average biased votes per sub-block (≈ 2 for this config) |
-| $\Delta_{\text{drift}}$ | ppm-induced phase drift, pi_codes/sub-block |
-| $e_{\text{lock}}$ | lock-loss threshold (~ 32 pi_codes = half UI) |
+| $\Delta_{\text{drift}}$ | ppm-induced phase drift, `pi_codes`/sub-block |
+| $e_{\text{lock}}$ | lock-loss threshold (~ 32 `pi_codes` = half UI) |
