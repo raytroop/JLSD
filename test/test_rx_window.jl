@@ -203,4 +203,91 @@ end
     @test rxw_covers(rxw, Φo_jittered) == false
 end
 
+# ── Production BlkRX state-machine regressions ───────────────────────────────
+
+include(joinpath(@__DIR__, "..", "src", "blks", "BlkRX.jl"))
+
+module ProdRxStub
+
+@kwdef mutable struct Param
+    const osr::Int64           = 24
+    const blk_size::Int64      = 1024
+    const blk_size_osr::Int64  = blk_size * osr
+    const subblk_size::Int64   = 32
+    const tui::Float64         = 1 / 56e9
+    freq_offset_ppm::Float64   = 0.0
+    osr_rx::Float64            = osr / (1 + freq_offset_ppm * 1e-6)
+end
+
+@kwdef mutable struct RxWindow
+    const param::Param
+    const capacity::Int = 4 * param.blk_size_osr
+    buf::Vector{Float64} = zeros(capacity)
+    t_min::Int     = 0
+    t_max::Int     = 0
+    t_rx::Float64  = 0.0
+end
+
+@kwdef mutable struct Clkgen
+    const param::Param
+    nphases::Int             = 4
+    rj::Float64              = 0.0
+    skews::Vector{Float64}   = zeros(nphases)
+    pi_res::Int              = 8
+    pi_max_code::Int         = 2^pi_res - 1
+    pi_ui_cover::Int         = 4
+    pi_codes_per_ui::Float64 = 2^pi_res / pi_ui_cover
+    pi_nonlin_lut::Vector{Float64} = zeros(2^pi_res)
+    pi_code_prev::Int        = 0
+    pi_wrap_ui_Δcode::Int    = pi_max_code - 10
+    Φo_subblk::Vector{Float64} = zeros(param.subblk_size)
+    Φo_subblk_valid::Bool    = false
+    t_rx_subblk::Float64     = 0.0
+    t_rx_next::Float64       = 0.0
+    pi_code_subblk::Int      = 0
+end
+
+end
+
+@testset "production clkgen candidate is not committed on underrun" begin
+    param  = ProdRxStub.Param()
+    clkgen = ProdRxStub.Clkgen(param = param)
+    rxw    = ProdRxStub.RxWindow(param = param)
+
+    clkgen.pi_code_prev = 250
+    BlkRX.clkgen_pi_itp_top!(clkgen, rxw; pi_code = 0)
+
+    @test BlkRX.rxw_covers(rxw, clkgen.Φo_subblk) == false
+    @test rxw.t_rx == 0.0
+    @test clkgen.pi_code_prev == 250
+    @test clkgen.Φo_subblk_valid
+
+    Φo_pending = copy(clkgen.Φo_subblk)
+    BlkRX.clkgen_pi_itp_top!(clkgen, rxw; pi_code = 0)
+    @test clkgen.Φo_subblk == Φo_pending
+
+    BlkRX.rxw_extend!(rxw, ones(Float64, param.blk_size_osr))
+    @test BlkRX.rxw_covers(rxw, clkgen.Φo_subblk)
+
+    t_rx_next = clkgen.t_rx_next
+    BlkRX.clkgen_commit_subblk!(clkgen, rxw)
+    @test rxw.t_rx == t_rx_next
+    @test clkgen.pi_code_prev == 0
+    @test clkgen.Φo_subblk_valid == false
+end
+
+@testset "production rxw_extend keeps low-side phase margin" begin
+    param = ProdRxStub.Param()
+    rxw   = ProdRxStub.RxWindow(param = param)
+
+    BlkRX.rxw_extend!(rxw, ones(Float64, param.blk_size_osr))
+    rxw.t_rx = 10.0
+    BlkRX.rxw_extend!(rxw, ones(Float64, param.blk_size_osr);
+                      phase_margin = 1.0)
+
+    Φi = [9.75, 10.0]
+    @test rxw.t_min == 9
+    @test BlkRX.rxw_covers(rxw, Φi)
+end
+
 println("All RxWindow tests passed.")

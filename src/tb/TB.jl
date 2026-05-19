@@ -162,7 +162,7 @@ function sim_blk(trx, blk_idx)
     # RX window.  Dynamic scheduler then drains as many sub-blocks as fit;
     # under freq_offset_ppm != 0 this is sometimes nsubblk±1.
     sample_filter_top!(splr, ch.Vo)
-    rxw_extend!(rxw, splr.Vo)
+    rxw_extend!(rxw, splr.Vo; phase_margin = rxw_phase_margin(clkgen))
 
     subblk_count = 0
     while true
@@ -170,7 +170,7 @@ function sim_blk(trx, blk_idx)
         rxw_covers(rxw, clkgen.Φo_subblk) || break
         append!(clkgen.Φo, clkgen.Φo_subblk)
         sim_subblk(trx, subblk_count + 1)
-        rxw.t_rx += param.subblk_size * param.osr_rx
+        clkgen_commit_subblk!(clkgen, rxw)
         subblk_count += 1
     end
 
@@ -185,7 +185,6 @@ function sim_blk(trx, blk_idx)
     wvfm.eye1.x_ofst = 0#round(-(cdr.pi_code/clkgen.pi_codes_per_ui)*wvfm.eye1.x_npts_ui[]+wvfm.eye1.x_npts[]/2)
     w_plot_test(wvfm, cond=(param.cur_blk%wvfm.plot_every_nblk==0))
 end
-
 
 
 

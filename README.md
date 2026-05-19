@@ -54,9 +54,9 @@ arbitrarily-spaced RX-clock instants.
                                        │ RxWindow  │     ↓
                                        │  ring buf │     slicers → CDR
                                        │  t_min,   │
-                                       │  t_max,   │     t_rx advances by
-                                       │  t_rx     │     subblk_size·osr_rx
-                                       └───────────┘     per sub-block
+                                       │  t_max,   │     t_rx advances on
+                                       │  t_rx     │     accepted candidates
+                                       └───────────┘
 ```
 
 The outer block loop is replaced by a **dynamic sub-block scheduler**:
@@ -64,6 +64,11 @@ each TX block, the scheduler drains as many sub-blocks as fit, then
 hands control back to TX.  Under freq_offset_ppm ≠ 0 the per-block count
 oscillates around `nsubblk·(1+ppm·10⁻⁶)` (e.g. 31 / 32 / 33 for
 `subblk_size=32`).
+
+For each candidate sub-block, nominal spacing is `subblk_size·osr_rx`.
+If the PI code wraps, the candidate cursor also absorbs one
+`pi_ui_cover·osr_rx` discontinuity.  The cursor is committed only after
+the candidate is covered by `RxWindow` and sampled.
 
 ### `RxWindow` — what it is and what it isn't
 
@@ -86,7 +91,7 @@ These are **asymmetric** for an analog window — unlike a digital FIFO:
 
 | Condition | What it means | Handling |
 |---|---|---|
-| **Underrun** | `rxw_covers(rxw, Φi)` returns `false` — the next sub-block would read past `t_max` (or below `t_min`). | The inner scheduler loop simply `break`s.  The sub-block is processed when the next TX block arrives.  **No data is lost**, no counter is needed. |
+| **Underrun** | `rxw_covers(rxw, Φi)` returns `false` — the pending sub-block would read past `t_max` (or below `t_min`). | The inner scheduler loop simply `break`s.  The pending `Φi` is retained and retried when the next TX block arrives, so RJ/PI state is not regenerated and **no data is lost**. |
 | **Overrun** | About-to-be-written samples would overwrite ring positions that the RX has not yet consumed. | `rxw_extend!` raises a **hard `error()`** with diagnostics.  Silent overwrite would inject a step discontinuity into the analog signal and invalidate downstream CDR/BER results. |
 
 The original silent-drop-and-count design was changed because for an
@@ -110,21 +115,24 @@ ppm, $\Phi_0$ would grow without bound and eventually throttle the
 scheduler into overrun.
 
 The fix: when `pi_code` wraps (`|Δpi_code| > pi_wrap_ui_Δcode`), absorb
-the `pi_ui_cover` discontinuity into `t_rx` instead of `pi_wrap_ui`:
+the `pi_ui_cover` discontinuity into a candidate RX cursor instead of
+`pi_wrap_ui`:
 
-$$t_{rx} \leftarrow t_{rx} - \text{sign}(\Delta\text{pi\_code})\cdot\text{pi\_ui\_cover}\cdot\text{osr\_rx}$$
+$$t_{rx,\text{cand}} = t_{rx} - \text{sign}(\Delta\text{pi\_code})\cdot\text{pi\_ui\_cover}\cdot\text{osr\_rx}$$
 
 $$\Phi_0 = \text{osr\_rx}\cdot\frac{\text{pi\_code}+\text{pi\_nonlin\_lut}[\text{pi\_code}+1]}{\text{pi\_codes\_per\_ui}}$$
 
 This keeps absolute sample positions continuous while bounding $\Phi_0$
 in $[0,\;\text{pi\_ui\_cover}\cdot\text{osr\_rx})$.  The CDR's fine
 within-PI correction still works; the cumulative drift is tracked
-exactly once.
+exactly once.  `t_rx` and `pi_code_prev` are committed only after
+`rxw_covers` succeeds and the sub-block is actually sampled; rejected
+candidates remain pending and are retried unchanged on the next TX block.
 
 ### CDR loop bandwidth and ppm tracking
 
-A consequence of the `pi_wrap_ui → t_rx` absorption: under the new
-scheduler, `pi_code` is the **only** mechanism the CDR has for fine
+A consequence of the `pi_wrap_ui → candidate t_rx` absorption: under the
+new scheduler, `pi_code` is the **only** mechanism the CDR has for fine
 drift tracking (the legacy unbounded `pi_wrap_ui` accumulator is gone).
 The integrator gain `ki` therefore directly bounds the maximum
 trackable ppm.
@@ -145,12 +153,12 @@ Practical tracking range (empirical, default kp=1/2⁶, full
 | `ki` | Trackable \|ppm\| | BER @ ppm = 100 |
 |---|---|---|
 | `1/2¹⁴` (original) | $\le 30$ | $0.49$ (no lock) |
-| `1/2¹²` (**default in this fork**) | $\le 100$ | $\sim 10^{-3}$ |
+| `1/2¹²` (**default in this fork**) | $\le 100$ | $0$ in the current default run |
 | `1/2¹⁰` | $\le 300$ | — |
 
 The original `ki = 1/2¹⁴` was tuned for the ppm-free simulator.  This
 fork raises `init_trx()`'s default to `ki = 1/2¹²` so the default
-`freq_offset_ppm = 100` simulation gives BER ≈ 0 out of the box.
+`freq_offset_ppm = 100` simulation gives BER = 0 in the current checked run.
 Users running the Widget at higher \|ppm\| can crank `ki` further via
 direct edit (no slider yet).
 
@@ -178,25 +186,26 @@ Two BER-checker changes were needed:
 | File | Change |
 |---|---|
 | `src/structs/TrxStruct.jl` | `freq_offset_ppm`, `osr_rx` (mutable) in `Param`; new `RxWindow` struct; `Bist.Si` → `Vector{UInt8}` |
-| `src/blks/BlkRX.jl` | `rxw_extend!`, `rxw_covers`, `rxw_interp`, `sample_filter_top!`; `clkgen_pi_itp_top!` rewired (wrap absorbed into `t_rx`); `sample_phi_top!` reads from `rxw` |
+| `src/blks/BlkRX.jl` | `rxw_extend!`, `rxw_covers`, `rxw_interp`, `sample_filter_top!`; pending candidate generation plus `clkgen_commit_subblk!`; phase-margin reclaim via `rxw_phase_margin`; `sample_phi_top!` reads from `rxw` |
 | `src/blks/BlkBIST.jl` | Variable-`nsym` handling in `ber_checker_top!`; trailing-bit accounting in `ber_check_prbs!` |
 | `src/tb/TB.jl` | `freq_offset_ppm = 100.0` default; `cdr.ki` bumped `1/2^14 → 1/2^12` so the CDR can track that ppm; dynamic sub-block scheduler in `sim_blk`; constructs `rxw` |
 | `src/tb/Widget.jl` | "RX freq offset" slider (`-500:10:500` ppm); slider callback keeps `osr_rx` consistent; matching dynamic scheduler in `step_sim_blk` |
 | `src/Main_UI.jl` | Constructs `rxw`, adds to NamedTuple |
-| `test/test_rx_window.jl` | New; 9 standalone test sets (no GLMakie dep) |
+| `test/test_rx_window.jl` | New; scheduler/window tests plus production `BlkRX` regressions for rejected candidates and low-side reclaim margin |
 | `test/test_ber_checker.jl` | New; lock-instant accounting regression |
 | `freq_offset_formulas.md` | New; full derivation of sample-time model, readiness check, capacity bound |
 
 ### Validation
 
-End-to-end BER over the full `nblk = 977` TX-block sim (defaults except
-where noted):
+End-to-end BER over the full `nblk = 977` TX-block sim.  The default row
+was re-run after the candidate/commit cleanup; the wider ppm rows are
+historical tuning guidance from the original sweep.
 
 | Scenario | `kp` | `ki` | ppm | BER |
 |---|---|---|---|---|
-| **`init_trx()` default in this fork** | $1/2^{6}$ | $1/2^{12}$ | $100$ | $\sim 10^{-3}$ |
-| Same gains | $1/2^{6}$ | $1/2^{12}$ | $\le \|100\|$ | $\sim 10^{-3}$ |
-| Cranked CDR | $1/2^{4}$ | $1/2^{10}$ | $\le \|300\|$ | $\sim 10^{-3}$ |
+| **`init_trx()` default in this fork** | $1/2^{6}$ | $1/2^{12}$ | $100$ | $0$ errors / $898{,}913$ bits |
+| Same gains | $1/2^{6}$ | $1/2^{12}$ | $\le \|100\|$ | historically low BER |
+| Cranked CDR | $1/2^{4}$ | $1/2^{10}$ | $\le \|300\|$ | historically low BER |
 | Cranked CDR | $1/2^{4}$ | $1/2^{10}$ | $\pm 500$ | $\sim 0.1$ (CDR-loop bandwidth limit) |
 | Legacy `ki` (ppm-free regime) | $1/2^{6}$ | $1/2^{14}$ | $0$ | $0$ |
 | Legacy `ki` (would be wrong) | $1/2^{6}$ | $1/2^{14}$ | $100$ | $0.49$ (CDR can't track) |
@@ -204,7 +213,7 @@ where noted):
 No `RxWindow` overrun fires anywhere in the slider range ±500 ppm — the
 hard-error guard exists for code regressions, not normal operation.
 
-All 19 unit-test assertions in `test/` pass.
+All 30 unit-test assertions in `test/` pass.
 
 ### Running
 

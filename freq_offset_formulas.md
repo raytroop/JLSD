@@ -55,7 +55,7 @@ $\text{subblk\_size}-1$ intervals — hence the $(j-1)$ multiplier.
 
 ## 3. Full sample-time model (with perturbations)
 
-$$\Phi_i[j] = \underbrace{\Phi_0}_{\text{CDR/PI}} + \underbrace{t_{rx} + (j-1)\cdot\text{osr\_rx}}_{\text{nominal}} + \underbrace{\Phi_{\text{skew}}[j]}_{\text{clock skew}} + \underbrace{\Phi_{rj}[j]}_{\text{random jitter}}$$
+$$\Phi_i[j] = \underbrace{\Phi_0}_{\text{CDR/PI}} + \underbrace{t_{rx,\text{cand}} + (j-1)\cdot\text{osr\_rx}}_{\text{nominal}} + \underbrace{\Phi_{\text{skew}}[j]}_{\text{clock skew}} + \underbrace{\Phi_{rj}[j]}_{\text{random jitter}}$$
 
 $$\Phi_0 = \text{osr\_rx}\cdot\frac{\text{pi\_code} + \text{pi\_nonlin\_lut}[\text{pi\_code}+1]}{\text{pi\_codes\_per\_ui}}$$
 
@@ -64,14 +64,21 @@ block-aligned framework, `pi_wrap_ui` absorbed the CDR's cumulative
 phase drift; including it in $\Phi_0$ under the new $t_{rx}$-based
 scheduler would double-count the ppm drift (already tracked by
 $\text{osr\_rx}$-spaced $t_{rx}$ advancement) and inflate $\Phi_0$ until
-the greedy scheduler is throttled into overrun.  Instead, when the CDR's
-$\text{pi\_code}$ wraps ($|\Delta\text{pi\_code}| > \text{pi\_wrap\_ui\_}\Delta\text{code}$),
-the discontinuity is absorbed into $t_{rx}$:
+the greedy scheduler is throttled into overrun.  Instead, the scheduler
+first prepares a **candidate** cursor.  When the CDR's $\text{pi\_code}$
+wraps ($|\Delta\text{pi\_code}| > \text{pi\_wrap\_ui\_}\Delta\text{code}$),
+the discontinuity is absorbed into that candidate cursor:
 
-$$t_{rx} \;\leftarrow\; t_{rx} \;-\; \text{sign}(\Delta\text{pi\_code})\cdot\text{pi\_ui\_cover}\cdot\text{osr\_rx}$$
+$$t_{rx,\text{cand}} \;=\; t_{rx} \;-\; \text{sign}(\Delta\text{pi\_code})\cdot\text{pi\_ui\_cover}\cdot\text{osr\_rx}$$
+
+If no wrap occurs, $t_{rx,\text{cand}} = t_{rx}$.
 
 This keeps absolute sample positions continuous while leaving $\Phi_0$
-bounded in $[0,\;\text{pi\_ui\_cover}\cdot\text{osr\_rx})$.
+bounded in $[0,\;\text{pi\_ui\_cover}\cdot\text{osr\_rx})$.  The candidate
+is committed only after `rxw_covers` succeeds and the sub-block is sampled;
+otherwise it remains pending and is retried unchanged after the next TX
+write.  This avoids committing PI-wrap state or regenerating RJ for a
+sub-block that has not actually occurred.
 
 $$\Phi_{\text{skew}}[j] = \frac{\text{skews}\bigl[((j-1)\bmod n_{\text{phases}})+1\bigr]}{t_{ui}}\cdot\text{osr}$$
 
@@ -106,11 +113,12 @@ where $C = \text{capacity}$.
 
 ---
 
-## 6. Inner-loop exit condition
+## 6. Nominal inner-loop exit condition
 
 $$\text{available} = t_{\max} - t_{rx}$$
 
-The greedy scheduler continues while `rxw_covers` is true:
+Ignoring PI/skew/RJ and assuming no pending candidate shift, the greedy
+scheduler continues while `rxw_covers` is true:
 
 $$t_{\max} > \lfloor t_{rx} + (\text{subblk\_size} - 1)\cdot\text{osr\_rx} \rfloor + 1$$
 
@@ -200,16 +208,18 @@ $$\Phi_0^{\max} \;=\; \text{pi\_ui\_cover}\cdot\text{osr\_rx}_{\max}$$
 
 $$\Phi_{\text{skew}}^{\max} \;=\; \frac{\max|\text{skews}|}{t_{ui}}\cdot\text{osr}$$
 
-$$\Phi_{rj}^{\max} \;=\; n_\sigma\cdot\frac{r_j}{t_{ui}}\cdot\text{osr} \qquad (n_\sigma\approx 4\text{–}5)$$
+$$\Phi_{rj}^{\max} \;=\; n_\sigma\cdot\frac{r_j}{t_{ui}}\cdot\text{osr}$$
+
+Gaussian RJ is unbounded, so $n_\sigma$ is an engineering envelope.  The
+implementation's reclaim helper uses $n_\sigma=8$ by default.
 
 **(C) Negative-phase reserve — the data BELOW $t_{rx}$ that the next
 sub-block could still need.**
 
-If the reclaim is $t_{\min}\!\leftarrow\!\max(t_{\min},\,\lfloor t_{rx}\rfloor)$
-(as currently implemented), this term is **0** but then a sub-block with
-sufficiently negative $\Phi_0$ would fail `rxw_covers` even with infinite
-capacity.  To preserve correctness for the full PI-phase envelope, reclaim
-must keep
+If reclaim used $t_{\min}\!\leftarrow\!\max(t_{\min},\,\lfloor t_{rx}\rfloor)$,
+this term would be **0**, and a sub-block with sufficiently negative
+phase could fail `rxw_covers` even with infinite capacity.  The production
+scheduler therefore keeps the full low-side phase envelope:
 
 $$t_{\min} \;\le\; \lfloor t_{rx} - (\Phi_0^{\min}{+}\Phi_{\text{skew}}^{\min}{+}\Phi_{rj}^{\min})\rfloor$$
 
@@ -235,8 +245,8 @@ $56\,\text{Gb/s}$):
 | $(\text{subblk\_size}-1)\cdot\text{osr\_rx}_{\max}$ | $\approx 744$ |
 | $2\,\Phi_0^{\max}$ | $\approx 192$ |
 | $2\,\Phi_{\text{skew}}^{\max}$ | $\approx 8$ |
-| $2\,\Phi_{rj}^{\max}$ | $\approx 3$ |
-| **`capacity_min`** | $\approx 25\,524$ |
+| $2\,\Phi_{rj}^{\max}$ | $\approx 6.5$ |
+| **`capacity_min`** | $\approx 25\,528$ |
 
 ---
 
@@ -247,13 +257,14 @@ Three options, in increasing safety margin:
 **(i) Tight derived bound** — use the boxed `capacity_min` from §9.
 Adaptive to all `Param` values; recompute on construction.
 
-**(ii) Simplified safe default** — analytically sufficient:
+**(ii) Simplified safe default for the current parameter regime**:
 
 $$\text{capacity} \;=\; 2\cdot\text{blk\_size\_osr}$$
 
-Two TX blocks of headroom.  Independent of $\text{ppm}$, $\text{pi\_ui\_cover}$,
-skew, or RJ.  About $1.9\times$ the tight bound.  Sufficient when the
-CDR is converged.
+Two TX blocks of headroom.  For the default and slider-range parameters it is
+about $1.9\times$ the tight bound and is sufficient when the CDR is converged.
+For unusually large `subblk_size`, `pi_ui_cover`, skew, or RJ envelopes, use
+the §9 bound directly instead of assuming `2*blk_size_osr` is universal.
 
 **(iii) Recommended in practice** — robust against slider extremes:
 
@@ -295,31 +306,34 @@ $$\text{buf}[\,t \bmod C + 1\,], \qquad C = \text{capacity}$$
 
 ---
 
-## 13. Cursor advancement (per accepted sub-block)
+## 13. Candidate/commit state machine (per accepted sub-block)
 
-$$t_{rx} \leftarrow t_{rx} + \text{subblk\_size}\cdot\text{osr\_rx}$$
+Prepare a candidate sample-time vector using §3:
 
-Applied **only after** `rxw_covers` returns true and the sub-block sampling
-has actually executed.
+$$t_{rx,\text{next}} = t_{rx,\text{cand}} + \text{subblk\_size}\cdot\text{osr\_rx}$$
+
+If `rxw_covers(rxw, Φi)` is false, do not modify committed state:
+
+$$t_{rx}\;\text{unchanged},\qquad \text{pi\_code\_prev}\;\text{unchanged},\qquad \Phi_i\;\text{kept pending}$$
+
+If `rxw_covers` returns true and the sub-block sampling has actually
+executed, commit:
+
+$$t_{rx} \leftarrow t_{rx,\text{next}}, \qquad \text{pi\_code\_prev} \leftarrow \text{pi\_code}_{\text{used}}$$
 
 ---
 
 ## 14. Reclaim before write (`rxw_extend!`)
 
-**Current implementation** (aggressive reclaim, may reject a sub-block with
-large negative $\Phi_0$ but is otherwise safe):
-
-$$t_{\min} \;\leftarrow\; \max(t_{\min},\,\lfloor t_{rx}\rfloor)$$
-
-**Phase-envelope-safe reclaim** (preserves data the next sub-block might
-need on the low side; the §9-(C) term):
+The scheduler calls `rxw_extend!` with a phase margin from
+`rxw_phase_margin(clkgen)` so data below $t_{rx}$ is retained for negative
+PI/skew/RJ excursions:
 
 $$t_{\min} \;\leftarrow\; \max\bigl(t_{\min},\;\lfloor t_{rx} - (\Phi_0^{\max}+\Phi_{\text{skew}}^{\max}+\Phi_{rj}^{\max})\rfloor\bigr)$$
 
-Either form is safe when paired with the §10 default capacity
-$2\cdot\text{blk\_size\_osr}$ and the §15 overrun guard, but only the
-envelope-safe form guarantees that every PI/skew/RJ realisation can be
-served without spurious `rxw_covers` failures.
+This is the §9-(C) reserve.  The low-level `rxw_extend!` API still accepts a
+zero margin for tests or custom schedulers, but the production `sim_blk` and
+Widget paths pass the phase-envelope margin.
 
 ---
 
@@ -434,7 +448,8 @@ $$\boxed{\;\text{ki} \;\approx\; S \cdot 1.64\times 10^{-8}\cdot\text{ppm}^2 \;\
 The fork's `init_trx()` uses $\text{ki} = 1/2^{12} \approx 2.4\times 10^{-4}$,
 which by this rule covers $|\text{ppm}|$ up to roughly
 $\sqrt{2.4\times 10^{-4}/(5\times 10^{-8})}\approx 70$ — and empirically
-covers the full default $\text{ppm}=100$ with BER $\approx 10^{-3}$.
+covers the full default $\text{ppm}=100$ run with 0 errors over 898,913
+checked bits in the current code.
 
 ### 16.7 Role of `kp`
 
@@ -463,6 +478,8 @@ $\text{kp}=1/2^6$ unchanged.
 | $\text{nsubblk}$ | $\text{blk\_size}/\text{subblk\_size}$ |
 | $t_{ui}$ | nominal UI period (seconds) |
 | $t_{rx}$ | RX read cursor (TX-grid sample index, Float64) |
+| $t_{rx,\text{cand}}$ | pending RX cursor used to build the next candidate sub-block |
+| $t_{rx,\text{next}}$ | value committed to $t_{rx}$ after an accepted sub-block |
 | $t_{\min}$, $t_{\max}$ | RxWindow time frontiers (TX-grid sample index, Int) |
 | $C$ | RxWindow capacity (samples) |
 | $\Phi_0$ | CDR / PI phase offset (TX-grid samples) |

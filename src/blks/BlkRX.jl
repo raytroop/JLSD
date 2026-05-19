@@ -5,18 +5,20 @@ include("../util/Util_JLSD.jl"); using .Util_JLSD
 export clkgen_pi_itp_top!
 export sample_itp_top!, sample_phi_top!, sample_filter_top!, slicers_top!
 export cdr_top!, adpt_top!
-export rxw_extend!, rxw_covers, rxw_interp
+export rxw_extend!, rxw_covers, rxw_interp, rxw_phase_margin
+export clkgen_commit_subblk!
 
 
 # ── RxWindow helpers ─────────────────────────────────────────────────────────
 
 """
-    rxw_extend!(rxw, waveform)
+    rxw_extend!(rxw, waveform; phase_margin = 0.0)
 
 Append `waveform` (one TX block of filtered samples on the TX grid) to
 the RX window, advancing the write frontier `t_max`.
 
-1. Reclaims storage already consumed by RX: `t_min ← max(t_min, floor(t_rx))`.
+1. Reclaims storage already consumed by RX, retaining `phase_margin` samples
+   below `t_rx` so negative PI/skew/RJ excursions are still serviceable.
 2. Hard-errors on overrun — silent overwrite would corrupt the continuous
    analog signal with a step discontinuity and invalidate downstream
    CDR / BER results.
@@ -24,8 +26,9 @@ the RX window, advancing the write frontier `t_max`.
 Underrun (RX cursor outran TX writer) is not handled here; the inner-loop
 `rxw_covers` check breaks the scheduler benignly when that happens.
 """
-function rxw_extend!(rxw, waveform::AbstractVector{Float64})
-    rxw.t_min = max(rxw.t_min, floor(Int, rxw.t_rx))
+function rxw_extend!(rxw, waveform::AbstractVector{Float64}; phase_margin::Real = 0.0)
+    reclaim_at = floor(Int, rxw.t_rx - max(Float64(phase_margin), 0.0))
+    rxw.t_min = max(rxw.t_min, reclaim_at)
 
     n = length(waveform)
     if (rxw.t_max + n) - rxw.t_min > rxw.capacity
@@ -53,6 +56,23 @@ function rxw_extend!(rxw, waveform::AbstractVector{Float64})
 end
 
 """
+    rxw_phase_margin(clkgen; rj_sigma = 8.0) -> Float64
+
+Conservative low-side timing margin, in TX-grid samples, retained by
+`rxw_extend!` below `rxw.t_rx`.  It covers a PI wrap/phase excursion,
+deterministic skew, and a finite Gaussian RJ envelope.
+"""
+function rxw_phase_margin(clkgen; rj_sigma::Real = 8.0)
+    @unpack tui, osr, osr_rx = clkgen.param
+    @unpack pi_ui_cover, skews, rj = clkgen
+
+    pi_margin = pi_ui_cover * osr_rx
+    skew_margin = isempty(skews) ? 0.0 : maximum(abs.(skews)) / tui * osr
+    rj_margin = max(Float64(rj_sigma), 0.0) * abs(rj) / tui * osr
+    return pi_margin + skew_margin + rj_margin
+end
+
+"""
     rxw_covers(rxw, Φi) -> Bool
 
 Return `true` when the RX window contains enough data for linear
@@ -76,7 +96,9 @@ end
     rxw_interp(rxw, t) -> Float64
 
 Linear interpolation of the RX window at Float64 TX-grid time `t`.
-Caller must ensure `t ∈ [t_min, t_max - 1]` (use `rxw_covers` to verify).
+Caller must ensure `floor(t) >= t_min` and `floor(t) + 1 < t_max`
+(use `rxw_covers` to verify), because this kernel always reads both
+the `k0` and `k0 + 1` taps.
 """
 @inline function rxw_interp(rxw, t::Float64)
     k0   = floor(Int, t)
@@ -102,12 +124,15 @@ the next RX sub-block, anchored at the RX read cursor `rxw.t_rx`.
   expressed in RX-clock UI.
 - Skew and RJ are absolute timing deviations, converted via `osr/t_ui`.
 
-The caller is responsible for `append!(clkgen.Φo, clkgen.Φo_subblk)` AFTER
-confirming `rxw_covers` succeeds, so that `Φo` history contains only
-committed sub-blocks.  The caller also advances `rxw.t_rx` by
-`subblk_size * osr_rx` after the sub-block is sampled.
+This function prepares a pending candidate only.  It intentionally does not
+advance `rxw.t_rx` or update `clkgen.pi_code_prev`; those are committed by
+`clkgen_commit_subblk!` only after `rxw_covers` succeeds and the sub-block is
+sampled.  If the candidate is not ready yet, the same `Φo_subblk` is retried
+after the next TX block instead of regenerating RJ.
 """
 function clkgen_pi_itp_top!(clkgen, rxw; pi_code)
+    clkgen.Φo_subblk_valid && return nothing
+
     @unpack tui, osr, osr_rx, subblk_size = clkgen.param
     @unpack nphases, rj, skews = clkgen
     @unpack pi_code_prev, pi_wrap_ui_Δcode = clkgen
@@ -116,13 +141,13 @@ function clkgen_pi_itp_top!(clkgen, rxw; pi_code)
     Δpi_code = pi_code - pi_code_prev
     if abs(Δpi_code) > pi_wrap_ui_Δcode
         # When pi_code wraps (e.g. 255→0 for ppm<0), absorb the pi_ui_cover
-        # discontinuity into rxw.t_rx so the absolute sampling phase remains
-        # continuous.  This replaces the legacy pi_wrap_ui term in Φ0 —
-        # otherwise, for non-zero ppm the CDR's cumulative drift compensation
-        # would double-count with the dynamic scheduler (which already tracks
-        # the average drift via osr_rx-spaced t_rx advancement), inflating Φ0
-        # without bound and eventually throttling the scheduler into overrun.
-        rxw.t_rx -= sign(Δpi_code) * pi_ui_cover * osr_rx
+        # discontinuity into the candidate cursor so the absolute sampling
+        # phase remains continuous.  This replaces the legacy pi_wrap_ui term
+        # in Φ0 — otherwise, for non-zero ppm the CDR's cumulative drift
+        # compensation would double-count with the dynamic scheduler.
+        t_rx = rxw.t_rx - sign(Δpi_code) * pi_ui_cover * osr_rx
+    else
+        t_rx = rxw.t_rx
     end
 
     # Φ0 is now bounded in [0, pi_ui_cover · osr_rx) — a fine within-PI phase
@@ -131,14 +156,31 @@ function clkgen_pi_itp_top!(clkgen, rxw; pi_code)
     Φskew = kron(ones(Int(subblk_size/nphases)), skews/tui*osr)
     Φrj   = rj/tui*osr*randn(subblk_size)
 
-    t_rx = rxw.t_rx
     @inbounds for j = 0:subblk_size-1
         clkgen.Φo_subblk[j+1] = Φ0 + t_rx + j*osr_rx + Φskew[j+1] + Φrj[j+1]
     end
 
-    clkgen.pi_code_prev = pi_code
-    # NOTE: append!(clkgen.Φo, clkgen.Φo_subblk) intentionally omitted.
-    # The caller appends only after rxw_covers confirms the buffer is ready.
+    clkgen.t_rx_subblk = t_rx
+    clkgen.t_rx_next = t_rx + subblk_size * osr_rx
+    clkgen.pi_code_subblk = pi_code
+    clkgen.Φo_subblk_valid = true
+    return nothing
+end
+
+"""
+    clkgen_commit_subblk!(clkgen, rxw)
+
+Commit the pending RX sample-time candidate after the sub-block has been
+sampled.  This is the only place that advances `rxw.t_rx` and
+`clkgen.pi_code_prev` for frequency-offset scheduling.
+"""
+function clkgen_commit_subblk!(clkgen, rxw)
+    clkgen.Φo_subblk_valid || error("clkgen_commit_subblk!: no pending RX sub-block")
+
+    rxw.t_rx = clkgen.t_rx_next
+    clkgen.pi_code_prev = clkgen.pi_code_subblk
+    clkgen.Φo_subblk_valid = false
+    return nothing
 end
 
 

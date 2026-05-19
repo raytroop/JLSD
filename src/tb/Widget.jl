@@ -178,7 +178,7 @@ function step_sim_blk(trx)
     ch_top!(ch, drv.Vo)
 
     sample_filter_top!(splr, ch.Vo)
-    rxw_extend!(rxw, splr.Vo)
+    rxw_extend!(rxw, splr.Vo; phase_margin = rxw_phase_margin(clkgen))
 
     subblk_count = 0
     while true
@@ -186,7 +186,7 @@ function step_sim_blk(trx)
         rxw_covers(rxw, clkgen.Φo_subblk) || break
         append!(clkgen.Φo, clkgen.Φo_subblk)
         step_sim_subblk(trx, subblk_count + 1)
-        rxw.t_rx += param.subblk_size * param.osr_rx
+        clkgen_commit_subblk!(clkgen, rxw)
         subblk_count += 1
     end
 end
